@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Praxis - Anthropologie de l'Humanité</title>
+
+    <link href="./style.css" rel="stylesheet"> 
+    <link href='https://fonts.googleapis.com/css?family=Overpass' rel='stylesheet'> 
+	
+	<link rel="shortcut icon" type="image/x-icon" href="./Image/arrow.png" />
+
+    <link rel="stylesheet" href="../Leaflet1.7/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA==" crossorigin=""></script>
+    <script type="text/javascript" src="./Data/datafrance.geojson"></script>
+    <script type="text/javascript" src="./Data/datasociete.json"></script>
+
+</head>
+<body>
+
+    <div id="side-bar">
+        <div class="toggle-button" id="toggle-button">
+            <img id="toggle-button-image" src="./Image/arrow.png">
+        </div>
+        <div>
+            <div method="get">
+                <div id="cont-searchbar">
+                <input id="searchbar"  type= "text" placeholder= "Rechercher..." />
+                <img id="loupe-searchbar" type= "image" src="./Image/loupe.svg" />
+                </div>
+                
+            </div>
+            <img id="properties-img" src="">
+            </div>
+            
+            <div id="titresidebar">
+                <p id="titre"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="time-bar">
+        <div class="structureHaut">
+            <img id="dj-plus" src="./Image/up-arrow.png">
+            <img id="uj-plus" src="./Image/up-arrow.png">
+            <img id="dm-plus" src="./Image/up-arrow.png">
+            <img id="um-plus" src="./Image/up-arrow.png">
+            <img id="dma-plus" src="./Image/up-arrow.png">
+            <img id="ma-plus" src="./Image/up-arrow.png">
+            <img id="ca-plus" src="./Image/up-arrow.png">
+            <img id="da-plus" src="./Image/up-arrow.png">
+            <img id="ua-plus" src="./Image/up-arrow.png">
+        </div>
+        <div class="structureBas">
+            <img id="dj-moins" src="./Image/down-arrow.png">
+            <img id="uj-moins" src="./Image/down-arrow.png">
+            <img id="dm-moins" src="./Image/down-arrow.png">
+            <img id="um-moins" src="./Image/down-arrow.png">
+            <img id="dma-moins" src="./Image/down-arrow.png">
+            <img id="ma-moins" src="./Image/down-arrow.png">
+            <img id="ca-moins" src="./Image/down-arrow.png">
+            <img id="da-moins" src="./Image/down-arrow.png">
+            <img id="ua-moins" src="./Image/down-arrow.png">
+        </div>
+
+        <div class="inttime-bar">
+            <div><p id="dj">9</p></div>
+            <div><p id="uj">9</p></div>
+            <div id="time-barre"><p>/</p></div>
+            <div><p id="dm">9</p></div>
+            <div><p id="um">9</p></div>
+            <div id="time-barre"><p>/</p></div>
+            <div id="time-tiret"><p id="moins">-</p></div>
+            <div><p id="dma">0</p></div>
+            <div><p id="ma">0</p></div>
+            <div><p id="ca">0</p></div>
+            <div><p id="da">0</p></div>
+            <div><p id="ua">0</p></div>
+        </div>
+    </div>
+
+
+    <div id="mapid"></div>
+    <script>
+
+        // génère la map
+        var map = L.map('mapid', {zoomControl: false}).setView([35.00, 2.00], 2);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 8,
+            minZoom: 2,
+        }).addTo(map);
+        new L.Control.Zoom({ position: 'bottomright' }).addTo(map);
+        map.attributionControl.setPrefix(false);
+
+        // Limite le déplacement au délà des limites de la carte
+        var southWest = L.latLng(-89.98155760646617, -180),
+            northEast = L.latLng(89.99346179538875, 180);
+        var bounds = L.latLngBounds(southWest, northEast);
+        map.setMaxBounds(bounds);
+        
+
+
+
+    </script>
+    
+    <script type="text/javascript" src="./script.js"></script>
+</body>
+</html>

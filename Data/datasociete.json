@@ -1,0 +1,130 @@
+var societe = {
+    "FR": [
+        {
+            "nom":"République Française",
+            "Banniere":"./Image/Banniere/Fr2020.jpg",
+            "when": 
+            ["2019-03-17T12:00:00+05:00",
+            "2030-03-17T12:00:00+05:00"]
+        },
+        {
+            "nom":"République Française",
+            "Banniere":"./Image/Banniere/Fr1990.jpg",
+            "when": 
+            ["1973-01-02T12:00:00+05:00",
+            "2019-03-17T12:00:00+05:00"],
+
+            "MDP" : "Dégénérescence du Capitalisme Monopoliste d'Etat"
+        },
+        {
+            "nom":"République Française",
+            "Banniere":"./Image/Banniere/Fr1960.jpg",
+            "when": 
+            ["1958-01-01T12:00:00+05:00",
+            "1973-03-23T12:00:00+05:00"],
+
+            "MDP" : "Ascendance du Capitalisme Monopoliste d'Etat"
+        },
+        {
+            "nom":"République Française",
+            "Banniere":"./Image/Banniere/Fr1950.jpg",
+            "when": 
+            ["1945-10-04T12:00:00+05:00",
+            "1957-12-31T12:00:00+05:00"],
+
+            "MDP" : "Décollage du Capitalisme Monopoliste d'Etat"
+        },
+        {
+            "nom":"République Française",
+            "Banniere":"./Image/Banniere/Fr1936.jpg",
+            "when": 
+            ["1929-10-24T12:00:00+05:00",
+            "1945-10-03T12:00:00+05:00"],
+
+            "MDP" : "Crise finale du Capitalisme Concurrentiel Libéral"
+        },
+        {
+            "nom":"République Française",
+            "Banniere":"./Image/Banniere/Fr1890.jpg",
+            "when": 
+            ["1870-09-04T12:00:00+05:00",
+            "1929-10-23T12:00:00+05:00"],
+
+            "MDP" : "Capitalisme Concurrentiel Libéral"
+        },
+
+
+        {
+            "nom":"Empire français",
+            "Banniere":"./Image/Banniere/Fr1860.jpg",
+            "when": 
+            ["1852-12-02T12:00:00+05:00",
+            "1870-09-03T12:00:00+05:00"],
+
+            "MDP" : "Capitalisme Concurrentiel Libéral"
+        },
+        {
+            "nom":"République Française",
+            "Banniere":"./Image/Banniere/Fr1848.jpg",
+            "when": 
+            ["1848-02-24T12:00:00+05:00",
+            "1852-12-01T12:00:00+05:00"],
+
+            "MDP" : "Capitalisme Concurrentiel Libéral"
+        },
+        {
+            "nom":"Royaume de France",
+            "Banniere":"./Image/Banniere/Fr1830.jpg",
+            "when": 
+            ["1815-07-08T12:00:00+05:00",
+            "1848-02-23T12:00:00+05:00"],
+
+            "MDP" : "Capitalisme Concurrentiel Libéral"
+        },
+        {
+            "nom":"Empire français",
+            "Banniere":"./Image/Banniere/Fr1815.jpg",
+            "when": 
+            ["1815-03-20T12:00:00+05:00",
+            "1815-07-07T12:00:00+05:00"],
+
+            "MDP" : "Capitalisme primitif"
+        },
+        {
+            "nom":"Royaume de France",
+            "Banniere":"./Image/Banniere/Fr1814.jpg",
+            "when": 
+            ["1814-04-04T12:00:00+05:00",
+            "1815-03-19T12:00:00+05:00"],
+
+            "MDP" : "Capitalisme primitif"
+        },
+        {
+            "nom":"Empire français",
+            "Banniere":"./Image/Banniere/Fr1805.jpg",
+            "when": 
+            ["1804-05-18T12:00:00+05:00",
+            "1814-04-03T12:00:00+05:00"],
+
+            "MDP" : "Capitalisme primitif"
+        },
+        {
+            "nom":"République Française",
+            "Banniere":"./Image/Banniere/Fr1792.jpg",
+            "when": 
+            ["1792-04-10T12:00:00+05:00",
+            "1804-05-17T12:00:00+05:00"],
+
+            "MDP" : "Capitalisme primitif"
+        },
+        {
+            "nom":"Royaume de France",
+            "Banniere":"./Image/Banniere/Fr1700.jpg",
+            "when": 
+            ["1500-04-04T12:00:00+05:00",
+            "1792-04-09T12:00:00+05:00"],
+
+            "MDP" : "Féodalisme de l'Ancien régime"
+        }
+    ]
+};

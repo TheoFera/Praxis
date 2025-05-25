@@ -1,0 +1,210 @@
+body {
+    padding: 0;
+    margin: 0;
+}
+
+p{
+    font-family: 'Overpass';
+    color: black;
+}
+
+html, body, #mapid {
+    height: 100%;
+    width: 100%;
+}
+
+.content {
+    transition: 0.3s;
+    height: 100vh;
+}
+
+/******Bar avec la date en haut à droite******/
+.time-bar{
+    position: fixed;
+    width : 175.375px;
+    height : 30px;
+    background: white;
+    right: 0;
+    margin-right: 20px;
+    margin-top: 20px;
+    border-radius : 4px;
+    border-color: black;
+    z-index: 1001;
+    font-size: 0;
+}
+/*Flèches pour changer*/
+.structureHaut{
+    left: 1.7px;
+    width : 171.375px;
+    z-index: 1003;
+    position: absolute;
+    bottom: 24.8px;
+
+}
+.structureBas{
+    left: 1.7px;
+    position: absolute;
+    z-index: 1004;
+    width : 171.375px;
+    top: 25px;
+}
+
+.structureHaut>img, .structureBas>img{
+    display: inline-block;
+    opacity: 0;
+}
+.structureHaut>img:hover, .structureBas>img:hover{
+    opacity: 0.75;
+}
+.structureHaut>img.active, .structureBas>img.active{
+    opacity: 1;
+}
+
+#dm-plus, #dm-moins{
+    padding-left:10.5px;
+}
+#dma-plus, #dma-moins{
+    padding-left:20px;
+}
+#uj-plus, #uj-moins, #um-plus, #um-moins, #ma-plus, #ma-moins, #ca-plus, #ca-moins,#da-plus, #da-moins, #ua-plus, #ua-moins{
+    padding-left:0.6px;
+}
+
+/*Chiffres*/
+.inttime-bar{
+    width : 171.375px;
+    height : 26px;
+    margin-left: 1.25px;
+    margin-right: 1.25px;
+    margin-top:2px;
+    margin-bottom: 2px;
+    z-index: 1002;
+}
+
+#time-tiret{
+    width: 8px;
+    background-color: white;
+}
+
+#time-barre{
+    width: 8px;
+    background-color: white;
+}
+
+.inttime-bar>div{
+    width: 14.375px;
+    height : 26px;
+    background-color: whitesmoke;
+    margin-left:0.75px;
+    margin-right:0.75px;
+    display: inline-block;
+}
+
+.inttime-bar>div>p{
+    font-size: 20px;
+    margin-top: 2px;
+    margin-bottom: 0;
+    text-align: center;
+    vertical-align: middle;
+}
+
+/*SideBar*/
+#side-bar{
+    position: fixed;
+    width : 408px;
+    height: 100%;
+    background: white;
+    left: -408px;
+    transition: .3s ease-out;
+    z-index: 1000;
+    border-right: grey;
+    border-right: 10px;
+}
+
+#cont-searchbar {
+    position: absolute;
+    z-index: 1010;
+    width: 98%;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    padding-top: 10px;
+}
+#searchbar{
+	border-radius: 50px;
+    border: 0.5px solid rgb(221 219 206);
+	color: #555656;
+    width: calc(100% - 85px);
+    padding-top: 11px;
+    padding-bottom: 11px;
+    outline: none;
+    background: white;
+    font-size: 0.9rem;
+    padding-left: 25px;
+	padding-right: 50px;
+}
+#loupe-searchbar {
+    position: absolute;
+    padding-right: 12px;
+    padding-bottom: 2.5px;
+    width: 28.5px;
+    cursor: pointer;
+}
+
+#properties-img {
+    position:absolute;
+    left:0px;
+    top:0px;
+    width: 408px;
+    height: 240px;
+    z-index: 1001;
+}
+
+#titresidebar{
+    position: absolute;
+    top: 240px;
+    margin: 15px;
+    line-height: 1.75rem;
+}
+#titre{
+    font-size: 1.375rem;
+    margin:0;
+}
+.toggle-button{
+    margin: 0;
+    position :fixed;
+    left: 0px;
+    top: 46.5%;
+    width: 20px;
+    height : 60px;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+    background:whitesmoke;
+    display:block;
+    transition: .3s ease-out;
+    z-index: 1010;
+}
+
+#toggle-button-image {
+    position: relative;
+    top: 20px;
+    max-width: 100%;
+    max-height: 100%;
+    max-width: 100%;
+    transition: .3s ease-out;  
+}
+
+
+#side-bar.active{
+    left: 0;
+}
+
+#side-bar.active .toggle-button{
+    left : 408px;
+    transition: .3s ease-out;
+
+}
+#side-bar.active #toggle-button-image{
+    transform: rotate(180deg);
+
+}
