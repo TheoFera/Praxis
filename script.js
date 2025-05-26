@@ -26,7 +26,7 @@ var codesoc = "";
 var Paysstyle = {
     "color": "#C0C0C0",
     "weight": 1,
-    "opacity": 100.65,
+    "opacity": 1,
     "fillOpacity": 0.1,
 };
 //Définis les filtres
