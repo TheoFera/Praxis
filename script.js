@@ -91,7 +91,7 @@ function cache(){
 
 //Date
 var date = new Date();
-const datemin = new Date(-30000, 0, 1);
+const datemin = new Date(-99000, 0, 1);
 const datemax = new Date();
 
 //date.setYear(-84321);
