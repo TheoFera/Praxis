@@ -111,7 +111,7 @@ html, body, #mapid {
     vertical-align: middle;
 }
 
-/*SideBar*/
+/*****************SideBar******************/
 #side-bar{
     position: fixed;
     width : 408px;
@@ -123,35 +123,69 @@ html, body, #mapid {
     border-right: grey;
     border-right: 10px;
 }
+#side-bar-container{
+    display: inline-block;
+    height: 100%;
+    padding-right: -7px;
+    overflow-y: hidden;
+}
+#side-bar-container:hover{
+    overflow-y: overlay;
+}
+/*scrollbar de la sidebar*/
+::-webkit-scrollbar {
+    width: 6px;
+}
 
+::-webkit-scrollbar-track {
+box-shadow: inset 0 0 2px #f1f3f4;
+background-color: #f1f3f4;
+}
+::-webkit-scrollbar-thumb{
+background-color: #70757a;
+}
+
+
+/*Search bar */
 #cont-searchbar {
     position: absolute;
     z-index: 1010;
-    width: 98%;
+    width: 97.5%;
     display: flex;
     justify-content: flex-end;
     align-items: center;
     padding-top: 10px;
 }
 #searchbar{
-	border-radius: 50px;
+	border-radius: 15px;
     border: 0.5px solid rgb(221 219 206);
 	color: #555656;
-    width: calc(100% - 85px);
+    width: calc(100% - 9px);
     padding-top: 11px;
     padding-bottom: 11px;
     outline: none;
     background: white;
     font-size: 0.9rem;
-    padding-left: 25px;
+    padding-left: 24px;
 	padding-right: 50px;
 }
 #loupe-searchbar {
     position: absolute;
-    padding-right: 12px;
-    padding-bottom: 2.5px;
-    width: 28.5px;
+    padding-left: 10px;
+    padding-bottom: 3px;
+    width: 26px;
     cursor: pointer;
+    transform: scaleX(-1);
+}
+#searchbar::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    background-image: url('./image/cross.svg');
+    background-size: 16px 16.5px;
+    width: 16px;
+    height: 16.5px;
+    cursor: pointer;
+    color: #555656;
+    margin-right: -6px;
 }
 
 #properties-img {
@@ -162,6 +196,37 @@ html, body, #mapid {
     height: 240px;
     z-index: 1001;
 }
+/* ///////////// Search bar choix*/
+
+#liste-searchbar {
+z-index: 1010;
+position: absolute;
+list-style-type: none;
+padding: 0px;
+margin-left: 30px ; 
+margin-top: 50px;
+width: calc(100% - 16%);
+
+}
+
+#liste-searchbar li {
+font-family: 'Overpass';
+font-size: 0.9rem;
+border: 1px solid #ddd;
+cursor: pointer;
+/*margin-top: -1px;  Prevent double borders */
+color:#555656 ;
+background-color: white;
+text-decoration: none;
+padding: 6px;
+color: black;
+display: block
+}
+
+#liste-searchbar li:hover:not(.header) {
+background-color: #eee;
+}
+
 
 #titresidebar{
     position: absolute;
@@ -173,6 +238,14 @@ html, body, #mapid {
     font-size: 1.375rem;
     margin:0;
 }
+#sous-titre{
+    font-size: 0.9rem;
+    color: #70757a;
+    margin: 0;
+    padding: 0;
+
+}
+
 .toggle-button{
     margin: 0;
     position :fixed;
@@ -180,12 +253,13 @@ html, body, #mapid {
     top: 46.5%;
     width: 20px;
     height : 60px;
-    border-top-right-radius: 4px;
-    border-bottom-right-radius: 4px;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
     background:whitesmoke;
     display:block;
     transition: .3s ease-out;
     z-index: 1010;
+    box-shadow: 0.5px 0.5px 1px #70757A;
 }
 
 #toggle-button-image {
@@ -211,10 +285,16 @@ html, body, #mapid {
     transform: rotate(180deg);
 }
 
-.sidebar-scroll{
+.side-bar-container{
     overflow-y:auto;                 /* seul endroit qui scroll */
     -webkit-overflow-scrolling:touch;/* inertie iOS */
     flex:1 1 auto;                   /* prend toute la hauteur dispo */
+}
+
+#contenu{
+    height: 100%;
+    /*margin-left: 15px;
+    margin-top: 15px;*/
 }
 
 /* ─── Breakpoint mobile (<=600 px) ─────────────────────────── */
@@ -227,21 +307,29 @@ html, body, #mapid {
         top:auto;
         width:100%;
         height:60vh;                          /* hauteur ouverte        */
-        transform:translateY(calc(100% - 18px)); /* fermé : 40 px visibles */
+        transform:translateY(calc(100% - 25px)); /* fermé : 40 px visibles */
         transition:transform .3s ease-out;
         border-radius:16px 16px 0 0;
-        overflow-y:auto;                      /* seul endroit scrollable */
-        -webkit-overflow-scrolling:touch;     /* inertie iOS            */
+        /*overflow-y:auto;                      /* seul endroit scrollable */
+        /*-webkit-overflow-scrolling:touch;     /* inertie iOS            */
     }
     #side-bar.active{ transform:translateY(0); }
+    
+    .side-bar-container {
+        overflow-y: auto;
+        height: 100%;
+        -webkit-overflow-scrolling: touch;
+        display: flex;
+        flex-direction: column;
+    }
 
     /* languette (pleine largeur) */
     .toggle-button{
-        position:absolute;
+        position:sticky;
         top:0;
         left:0;
         width:100%;
-        height:18px;                          /* << hauteurs liées */
+        height:25px;                          /* << hauteurs liées */
         background:#e5e5e5;
         border-radius:16px 16px 0 0;
         display:flex;
@@ -259,13 +347,28 @@ html, body, #mapid {
         top:auto!important;           /* on annule le top:20px d’origine */
         position:static;              /* plus de décalage vertical */
     }
-    #side-bar.active #toggle-button-image{ transform:rotate(180deg); }
+    #side-bar.active #toggle-button-image{ transform:rotate(90deg); }
+    
+
+    #properties-img,
+    #titresidebar {
+        position: static !important;
+        width: 100%;
+        top: unset !important;
+        left: unset !important;
+        margin: 0;
+    }
+    #titresidebar {
+        margin-top: 8px;
+        margin-left: 16px;
+        margin-right: 16px;
+    }
 
     /* search-bar : on la pousse sous la languette */
     #cont-searchbar{
-        position:relative;
+        /*position:static;*/
         width:100%;
-        padding:56px 16px 8px;   /* 40 px languette + 16 px marge */
+        padding:16px 16px 8px;   /* 40 px languette + 16 px marge */
         box-sizing:border-box;
     }
     #searchbar{ width:100%; }
