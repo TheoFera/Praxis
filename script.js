@@ -208,12 +208,14 @@ function incrementer(Signe, Nb, bouton, type){
         }
     }
 
-    /*if(datemin>date || date>datemax){
-        date = savedate;
-    }else{*/
+    if(date > datemax){
+        date = new Date(datemax);
+    } else if(date < datemin){
+        date = new Date(datemin);
+    }
     activer(bouton);
     setTimeout(function(){activer(bouton)}, 100);
-    //}
+    
     AfficheDate(date);
     ChangeData(date, codesoc);
 }
