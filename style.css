@@ -235,7 +235,9 @@ html, body, #mapid {
     }
 
     #side-bar.active .toggle-button {
+        left: 50%;
         bottom: 60%;
+        transform: translateX(-50%);
     }
 
     #toggle-button-image {
