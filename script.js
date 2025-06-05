@@ -21,32 +21,39 @@ const sideBar = document.getElementById('side-bar');
 
 ////////////////// Partie sur le Geojson //////////////////
 
-// génère la map
+// --- Initialisation de la carte ---
+// Création de la carte Leaflet sans le contrôle de zoom par défaut
 var map = L.map('mapid', {zoomControl: false}).setView([35.00, 2.00], 2);
+// Chargement des tuiles satellites fournies par ArcGIS
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 8,
     minZoom: 2,
 }).addTo(map);
+// Ajout du contrôle de zoom en bas à droite
 new L.Control.Zoom({ position: 'bottomright' }).addTo(map);
+// Retire le préfixe "Leaflet" de l'attribution
 map.attributionControl.setPrefix(false);
 
-// Limite le déplacement au délà des limites de la carte
+// --- Gestion des limites de la carte ---
+// Empêche l'utilisateur de se déplacer en dehors du monde affiché
 var southWest = L.latLng(-89.98155760646617, -180),
     northEast = L.latLng(89.99346179538875, 180);
 var bounds = L.latLngBounds(southWest, northEast);
 map.setMaxBounds(bounds);
 
-var codesoc = "";
-//style du geojson (à placer avant sinon ne sera pas appliqué)
+var codesoc = ""; // contiendra le code de la société sélectionnée
+
+// --- Style appliqué au GeoJSON ---
 var Paysstyle = {
     "color": "#C0C0C0",
     "weight": 1,
     "opacity": 1,
     "fillOpacity": 0.1,
 };
-//Définis les filtres
-var Filtrepays = L.layerGroup();
-var Layername = "Pays";
+
+// --- Définition des couches de filtres ---
+var Filtrepays = L.layerGroup();      // contiendra les polygones des pays
+var Layername = "Pays";               // nom utilisé dans le contrôle de couche
 var Filtres = {
     "Pays": Filtrepays,
     //"Mode de production": FiltreMOP
@@ -55,13 +62,20 @@ var Filtres = {
 //Recharge le layer à chaque changement de date
 //  ol: objetstockantlesdifférentslayergroup (Filtres) ; lg: layergroup (Filtrepays) ; ls: layergroupstyle (paysstyle)
 function MAJLayers(ol, lg, ls){
-        //enlève le layergroup désormais "périmé" des filtres "ol"
+        // ol : objet contenant toutes les couches
+        // lg : LayerGroup à mettre à jour
+        // ls : style à appliquer aux entités
+
+        // Supprime l'ancien contenu du LayerGroup
         lg.clearLayers();
+        // Met à jour le contrôle des couches en retirant l'ancien group
         L.control.layers(null, ol).removeLayer(lg);
-        //Ajoute les données du Geojson au layergroup "lg", puis l'ajoute aux filtres "ol"
+        // Recharge les données GeoJSON en appliquant un filtre temporel
         L.geoJSON(france, {
             style : ls,
             filter: function (feature, layer) {
+                // N'affiche l'entité que si la date courante est comprise
+                // entre sa date de début et de fin
                 var startdate = new Date(feature.geometry["when"][0]);
                 var enddate = new Date(feature.geometry["when"][1]);
                 if(startdate < date  && enddate > date){
@@ -70,17 +84,20 @@ function MAJLayers(ol, lg, ls){
                     return false;
                 }
             },
+            // Ajoute l'événement de clic sur chaque entité
             onEachFeature: onEachFeature,
         }).addTo(lg);
+        // Affiche le LayerGroup actualisé sur la carte
         lg.addTo(map);
 }
 
 function onEachFeature(feature, layer){
+    // Quand un polygone est cliqué, ouvrir la side bar et charger ses données
     layer.on('click', (e) => {
         sideBar.classList.add('active');
         codesoc = feature.properties.code;
         ChangeData(date, codesoc);
-    } )   
+    } )
 }
 
 
