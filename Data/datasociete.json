@@ -52,8 +52,6 @@ var societe = {
 
             "MDP" : "Capitalisme Concurrentiel Libéral"
         },
-
-
         {
             "nom":"Empire français",
             "Banniere":"./Image/Banniere/Fr1860.jpg",

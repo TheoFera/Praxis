@@ -1,6 +1,6 @@
 /*à faire : 
 - Faire un bouton play/pause pour voir le temps défiler tout seul
-- Empêcher de pouvoir aller dans les dates après la date du jour et avant -99 000 avant JC
+- Empêcher de pouvoir aller dans les dates après la date du jour et avant -99 000 avant JC => OK
 - Ajouter d'autres factions mineures qui ont constituées la France => nécessite de réussir à gérer + d'un pays
 - Intégrer les conflits
 
@@ -14,12 +14,27 @@
     -> Avant 1713
 */
 
-
-//Side bar
+////////////// initialisation des boutons ////////////
+////Side bar 
 const toggleButton = document.getElementById('toggle-button');
 const sideBar = document.getElementById('side-bar');
 
-//************ Partie sur le Geojson ************//
+////////////////// Partie sur le Geojson //////////////////
+
+// génère la map
+var map = L.map('mapid', {zoomControl: false}).setView([35.00, 2.00], 2);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 8,
+    minZoom: 2,
+}).addTo(map);
+new L.Control.Zoom({ position: 'bottomright' }).addTo(map);
+map.attributionControl.setPrefix(false);
+
+// Limite le déplacement au délà des limites de la carte
+var southWest = L.latLng(-89.98155760646617, -180),
+    northEast = L.latLng(89.99346179538875, 180);
+var bounds = L.latLngBounds(southWest, northEast);
+map.setMaxBounds(bounds);
 
 var codesoc = "";
 //style du geojson (à placer avant sinon ne sera pas appliqué)
@@ -68,9 +83,11 @@ function onEachFeature(feature, layer){
     } )   
 }
 
-///////////////////////////////////////////////
 
-//Side bar
+
+
+
+////////////////  Side bar   ///////////////
 toggleButton.addEventListener('click', show);
 
 function show(){
@@ -87,7 +104,37 @@ function cache(){
 }
 
 
-//////////////////////////////////////////////
+/////////// Change la donnée dans la Side Bar /////////////
+
+function ChangeData(date, code){
+    
+    var p = societe.FR;
+    
+        //p = societe.JSON.stringify(code);
+        //peut-être faire un if "case" avec tous les codes parce que je n'arrive pas à mettre "code" en variable pour l'appel 
+        //sinon ajouter une ramification en amont afin de pouvoir appeler "FR" avec un tableau
+    var n =-1;
+    var nom = "";
+    while (nom==="" && n< p.length-1){
+        n++;
+        var startdate = new Date(p[n]["when"][0]);
+        var enddate = new Date(p[n]["when"][1]);
+        if(startdate < date  && enddate > date){
+            nom = p[n]["nom"];
+            banniere = p[n]["Banniere"];
+        }
+    }
+
+    //feature.properties.name;
+    document.getElementById('titre').innerText = nom;
+    document.getElementById('properties-img').src= banniere;
+}
+
+
+
+
+
+//////////////   Gestion des dates   //////////////////////////////
 
 //Date
 var date = new Date();
@@ -97,8 +144,6 @@ const datemax = new Date();
 //date.setYear(-84321);
 L.control.layers(null, Filtres, {position: 'bottomright'}).addTo(map);
 AfficheDate(date);
-
-
 
 /*console.log(date.toISOString());
 console.log(date.toISOString());
@@ -278,29 +323,3 @@ function Div(u){
     var Tableau = [dm, m, c ,d, u];
     return Tableau;
 }
-
-function ChangeData(date, code){
-    
-    var p = societe.FR;
-    
-        //p = societe.JSON.stringify(code);
-        //peut-être faire un if "case" avec tous les codes parce que je n'arrive pas à mettre "code" en variable pour l'appel 
-        //sinon ajouter une ramification en amont afin de pouvoir appeler "FR" avec un tableau
-    var n =-1;
-    var nom = "";
-    while (nom==="" && n< p.length-1){
-        n++;
-        var startdate = new Date(p[n]["when"][0]);
-        var enddate = new Date(p[n]["when"][1]);
-        if(startdate < date  && enddate > date){
-            nom = p[n]["nom"];
-            banniere = p[n]["Banniere"];
-        }
-    }
-
-    //feature.properties.name;
-    document.getElementById('titre').innerText = nom;
-    document.getElementById('properties-img').src= banniere;
-}
-
-
