@@ -278,8 +278,8 @@ function incrementer(Signe, Nb, bouton, type){
     activer(bouton);
     setTimeout(function(){activer(bouton)}, 100);
     
-    AfficheDate(date);
-    ChangeData(date, codesoc);
+    AfficheDate(date); //Change l'affichage de la date
+    ChangeData(date, codesoc); //Change les infos de la sidebar
 }
 
  //fonction qui fait switcher active/inactives les flèches 
@@ -312,7 +312,7 @@ document.getElementById('ma').innerText = An[1];
 document.getElementById('ca').innerText = An[2];
 document.getElementById('da').innerText = An[3];
 document.getElementById('ua').innerText = An[4];
-MAJLayers(Filtres, Filtrepays, Paysstyle);
+MAJLayers(Filtres, Filtrepays, Paysstyle); //Change les contours quand la date change
 }
 
 function Div(u){
