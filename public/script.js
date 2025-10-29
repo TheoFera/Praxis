@@ -41,7 +41,13 @@ var southWest = L.latLng(-89.98155760646617, -180),
 var bounds = L.latLngBounds(southWest, northEast);
 map.setMaxBounds(bounds);
 
+// en haut, après la création de la map
+var layersControl = L.control.layers(null, Filtres, {position: 'bottomright'}).addTo(map);
+
 var codesoc = ""; // contiendra le code de la société sélectionnée
+
+////// Nouveau : contiendra la FeatureCollection renvoyée par l'API
+var pays = { type: 'FeatureCollection', features: [] };
 
 // --- Style appliqué au GeoJSON ---
 var Paysstyle = {
@@ -61,34 +67,47 @@ var Filtres = {
 
 //Recharge le layer à chaque changement de date
 //  ol: objetstockantlesdifférentslayergroup (Filtres) ; lg: layergroup (Filtrepays) ; ls: layergroupstyle (paysstyle)
-function MAJLayers(ol, lg, ls){
-        // ol : objet contenant toutes les couches
-        // lg : LayerGroup à mettre à jour
-        // ls : style à appliquer aux entités
+async function MAJLayers(ol, lg, ls){
+    // 1) Date au format YYYY-MM-DD pour l'API
+    const dateISO = date.toISOString().split('T')[0];
 
-        // Supprime l'ancien contenu du LayerGroup
-        lg.clearLayers();
-        // Met à jour le contrôle des couches en retirant l'ancien group
-        L.control.layers(null, ol).removeLayer(lg);
-        // Recharge les données GeoJSON en appliquant un filtre temporel
-        L.geoJSON(france, {
-            style : ls,
-            filter: function (feature, layer) {
-                // N'affiche l'entité que si la date courante est comprise
-                // entre sa date de début et de fin
-                var startdate = new Date(feature.geometry["when"][0]);
-                var enddate = new Date(feature.geometry["when"][1]);
-                if(startdate < date  && enddate > date){
-                    return true;
-                } else {
-                    return false;
-                }
-            },
-            // Ajoute l'événement de clic sur chaque entité
-            onEachFeature: onEachFeature,
-        }).addTo(lg);
-        // Affiche le LayerGroup actualisé sur la carte
-        lg.addTo(map);
+    // 2) Récupère les frontières auprès de l’API Express
+    //    - On attend la réponse (await)
+    //    - On stocke tout dans la variable globale "pays"
+    try {
+        const resp = await fetch(`/api/frontieres?date=${dateISO}`);
+        if (!resp.ok) {
+            console.error('API /api/frontieres a répondu avec une erreur', resp.status);
+            return;
+        }
+        pays = await resp.json(); // FeatureCollection reçu du serveur
+    } catch (e) {
+        console.error('Impossible de contacter /api/frontieres :', e);
+        return; // on n'affiche rien si erreur réseau
+    }
+
+    // 3) Nettoie le LayerGroup et le contrôle de couches
+    lg.clearLayers();
+    layersControl.removeLayer(lg);
+
+    // 4) Ajoute la couche GeoJSON sur la carte
+    L.geoJSON(pays, {
+        style: ls,
+        filter: function (feature, layer) {
+            if (!feature.geometry || !feature.geometry.when) return false;
+
+            const [startStr, endStr] = feature.geometry.when;
+            const startOk = !startStr || new Date(startStr) <= date; // si pas de début -> ok
+            const endOk   = !endStr   || new Date(endStr)   >= date; // si pas de fin   -> ok
+
+            return startOk && endOk;
+        },
+        onEachFeature: onEachFeature,
+    }).addTo(lg);
+
+    // 5) Affiche le LayerGroup actualisé
+    layersControl.addOverlay(lg, Layername);
+    lg.addTo(map);
 }
 
 function onEachFeature(feature, layer){
@@ -159,7 +178,6 @@ const datemin = new Date(-99000, 0, 1);
 const datemax = new Date();
 
 //date.setYear(-84321);
-L.control.layers(null, Filtres, {position: 'bottomright'}).addTo(map);
 AfficheDate(date);
 
 /*console.log(date.toISOString());

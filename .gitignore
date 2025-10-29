@@ -1,0 +1,24 @@
+# --- Secrets & configs locaux ---
+.env
+*.env
+
+# --- Dépendances ---
+node_modules/
+
+# --- Logs & caches ---
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# --- Builds / artefacts éventuels ---
+dist/
+build/
+coverage/
+
+# --- OS / éditeurs ---
+.DS_Store
+Thumbs.db
+.vscode/
