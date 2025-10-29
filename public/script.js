@@ -2,7 +2,7 @@
 - Faire un bouton play/pause pour voir le temps défiler tout seul
 - Empêcher de pouvoir aller dans les dates après la date du jour et avant -99 000 avant JC => OK
 - Ajouter d'autres factions mineures qui ont constituées la France => nécessite de réussir à gérer + d'un pays
-- Intégrer les conflits
+- Intégrer les conflits (events)
 
 - intégrer de nouvelles données à la slide bar :
     -> Mode de production
