@@ -23,7 +23,7 @@ const sideBar = document.getElementById('side-bar');
 
 // --- Initialisation de la carte ---
 // Création de la carte Leaflet sans le contrôle de zoom par défaut
-var map = L.map('mapid', {zoomControl: false}).setView([35.00, 2.00], 2);
+var map = L.map('mapid', {zoomControl: false}).setView([35.00, 2.00], 3);
 // Chargement des tuiles satellites fournies par ArcGIS
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 8,
