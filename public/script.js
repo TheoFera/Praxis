@@ -111,12 +111,22 @@ async function MAJLayers(ol, lg, ls){
 }
 
 function onEachFeature(feature, layer){
-    // Quand un polygone est cliqué, ouvrir la side bar et charger ses données
-    layer.on('click', (e) => {
-        sideBar.classList.add('active');
-        codesoc = feature.properties.code;
-        ChangeData(date, codesoc);
-    } )
+  layer.on('click', () => {
+    sideBar.classList.add('active');
+
+    // Nom prioritaire : entity_name (depuis la BDD).
+    // Fallback éventuel : properties.name (si présent dans le GeoJSON).
+    const entityName   = feature.properties?.entity_name ?? 'Nom inconnu';
+    const categoryName = feature.properties?.category_name ?? 'Catégorie inconnue';
+    
+    console.log('Feature au clic →', feature.properties);
+
+    document.getElementById('titre').innerText = entityName;
+    document.getElementById('sous-titre').innerText = categoryName;
+
+    // (Optionnel) Nettoyer l'image/bannière si tu n'en as pas ici :
+    // document.getElementById('properties-img').src = '';
+  });
 }
 
 
