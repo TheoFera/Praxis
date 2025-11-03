@@ -26,7 +26,7 @@ const sideBar = document.getElementById('side-bar');
 var map = L.map('mapid', {zoomControl: false}).setView([35.00, 2.00], 3);
 // Chargement des tuiles satellites fournies par ArcGIS
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 8,
+    maxZoom: 10,
     minZoom: 2,
 }).addTo(map);
 // Ajout du contrôle de zoom en bas à droite
@@ -41,8 +41,10 @@ var southWest = L.latLng(-89.98155760646617, -180),
 var bounds = L.latLngBounds(southWest, northEast);
 map.setMaxBounds(bounds);
 
-// en haut, après la création de la map
-var layersControl = L.control.layers(null, Filtres, {position: 'bottomright'}).addTo(map);
+let currentAbort = null;
+function abortPending() {
+  if (currentAbort) { currentAbort.abort(); currentAbort = null; }
+}
 
 var codesoc = ""; // contiendra le code de la société sélectionnée
 
@@ -50,12 +52,37 @@ var codesoc = ""; // contiendra le code de la société sélectionnée
 var pays = { type: 'FeatureCollection', features: [] };
 
 // --- Style appliqué au GeoJSON ---
-var Paysstyle = {
+/*var Paysstyle = {
     "color": "#C0C0C0",
     "weight": 1,
     "opacity": 1,
     "fillOpacity": 0.1,
-};
+};*/
+
+// Seuils de zoom recommandés
+const DISTRICT_Z = 6;   // dès 4 on montre ADM1
+const MUNIC_Z    = 8;   // dès 6 on montre ADM2
+
+// Styles adaptatifs (en fonction du zoom courant)
+const styleCountries = (z) => ({
+  pane: 'countries',
+  color: '#888',
+  weight: Math.max(0.5, z/3 - 0.3),
+  fillOpacity: 0.05
+});
+const styleDistricts = (z) => ({
+  pane: 'districts',
+  color: '#888',
+  weight: Math.max(0.7, z/2 - 0.5),
+  fillOpacity: 0.03
+});
+const styleMunicipalities = (z) => ({
+  pane: 'municipalities',
+  color: '#888',
+  weight: Math.max(1, z - 5),
+  fillOpacity: 0.02
+});
+
 
 // --- Définition des couches de filtres ---
 var Filtrepays = L.layerGroup();      // contiendra les polygones des pays
@@ -65,50 +92,122 @@ var Filtres = {
     //"Mode de production": FiltreMOP
 };
 
-//Recharge le layer à chaque changement de date
-//  ol: objetstockantlesdifférentslayergroup (Filtres) ; lg: layergroup (Filtrepays) ; ls: layergroupstyle (paysstyle)
-async function MAJLayers(ol, lg, ls){
-    // 1) Date au format YYYY-MM-DD pour l'API
-    const dateISO = date.toISOString().split('T')[0];
+// Groupes de couches
+const groupCountries      = L.layerGroup().addTo(map); // visible par défaut
+const groupDistricts      = L.layerGroup();
+const groupMunicipalities = L.layerGroup();
 
-    // 2) Récupère les frontières auprès de l’API Express
-    //    - On attend la réponse (await)
-    //    - On stocke tout dans la variable globale "pays"
-    try {
-        const resp = await fetch(`/api/frontieres?date=${dateISO}`);
-        if (!resp.ok) {
-            console.error('API /api/frontieres a répondu avec une erreur', resp.status);
-            return;
-        }
-        pays = await resp.json(); // FeatureCollection reçu du serveur
-    } catch (e) {
-        console.error('Impossible de contacter /api/frontieres :', e);
-        return; // on n'affiche rien si erreur réseau
+const overlays = new Map(); // name -> layerGroup
+const layersControl = L.control.layers(null, overlays, {position:'bottomright'}).addTo(map);
+
+// 4) Ajouts initiaux
+addOverlay('Pays', groupCountries);
+addOverlay('Régions', groupDistricts);
+addOverlay('Département', groupMunicipalities);
+
+function addOverlay(name, layerGroup) {
+  if (!overlays.has(name)) {
+    overlays.set(name, layerGroup);
+    layersControl.addOverlay(layerGroup, name);
+  }
+}
+
+function removeOverlay(name) {
+  const lg = overlays.get(name);
+  if (lg) {
+    // retire du contrôle et de la carte si visible
+    layersControl.removeLayer(lg);
+    map.removeLayer(lg);
+    overlays.delete(name);
+  }
+}
+
+map.createPane('countries');      map.getPane('countries').style.zIndex = 200;
+map.createPane('districts');      map.getPane('districts').style.zIndex = 300;
+map.createPane('municipalities'); map.getPane('municipalities').style.zIndex = 400;
+
+
+function normalize(s){ return String(s||'').toLowerCase(); }
+const isCountry      = (s) => /adm0|country|countries|pays/.test(normalize(s));
+const isDistrict     = (s) => /adm1|district|region|state/.test(normalize(s));
+const isMunicipality = (s) => /adm2|municipal|commune|county/.test(normalize(s));
+
+//Recharge le layer à chaque changement de date
+async function fetchFrontieres(dateISO, bboxCSV, typesCSV, zoom) {
+  const url = `/api/frontieres?date=${dateISO}&types=${typesCSV}&zoom=${zoom}&bbox=${bboxCSV}`;
+  const resp = await fetch(url, { signal: currentAbort?.signal });
+  if (!resp.ok) throw new Error('API ' + resp.status);
+  return await resp.json();
+}
+
+async function MAJLayersMulti() {
+  abortPending();
+  currentAbort = new AbortController();
+
+  const z = map.getZoom();
+  const b = map.getBounds().pad(0.05);
+  const bboxCSV = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
+                    .map(v => v.toFixed(6)).join(',');
+  const dateISO = date.toISOString().split('T')[0];
+
+  // on efface les couches existantes
+  [groupCountries, groupDistricts, groupMunicipalities].forEach(g => g.clearLayers());
+
+  try {
+    // 1) Pays (toujours)
+    const fc0 = await fetchFrontieres(dateISO, bboxCSV, 'countries', z);
+    L.geoJSON(fc0, {
+      pane: 'countries',
+      style: () => styleCountries(z),
+      filter: (f) => {
+        const w = f.properties?.when || [null, null];
+        const startOk = !w[0] || new Date(w[0]) <= date;
+        const endOk   = !w[1] || new Date(w[1]) >= date;
+        return startOk && endOk;
+      },
+      onEachFeature
+    }).addTo(groupCountries);
+
+    // 2) Districts si z >= DISTRICT_Z
+    if (z >= DISTRICT_Z) {
+      const fc1 = await fetchFrontieres(dateISO, bboxCSV, 'districts', z);
+      L.geoJSON(fc1, {
+        pane: 'districts',
+        style: () => styleDistricts(z),
+        filter: (f) => {
+          const w = f.properties?.when || [null, null];
+          const startOk = !w[0] || new Date(w[0]) <= date;
+          const endOk   = !w[1] || new Date(w[1]) >= date;
+          return startOk && endOk;
+        },
+        onEachFeature
+      }).addTo(groupDistricts);
     }
 
-    // 3) Nettoie le LayerGroup et le contrôle de couches
-    lg.clearLayers();
-    layersControl.removeLayer(lg);
-
-    // 4) Ajoute la couche GeoJSON sur la carte
-    L.geoJSON(pays, {
-        style: ls,
-        filter: function (feature, layer) {
-            if (!feature.geometry || !feature.geometry.when) return false;
-
-            const [startStr, endStr] = feature.geometry.when;
-            const startOk = !startStr || new Date(startStr) <= date; // si pas de début -> ok
-            const endOk   = !endStr   || new Date(endStr)   >= date; // si pas de fin   -> ok
-
-            return startOk && endOk;
+    // 3) Municipalities si z >= MUNIC_Z
+    if (z >= MUNIC_Z) {
+      const fc2 = await fetchFrontieres(dateISO, bboxCSV, 'municipalities', z);
+      L.geoJSON(fc2, {
+        pane: 'municipalities',
+        style: () => styleMunicipalities(z),
+        filter: (f) => {
+          const w = f.properties?.when || [null, null];
+          const startOk = !w[0] || new Date(w[0]) <= date;
+          const endOk   = !w[1] || new Date(w[1]) >= date;
+          return startOk && endOk;
         },
-        onEachFeature: onEachFeature,
-    }).addTo(lg);
+        onEachFeature
+      }).addTo(groupMunicipalities);
+    }
 
-    // 5) Affiche le LayerGroup actualisé
-    layersControl.addOverlay(lg, Layername);
-    lg.addTo(map);
+  } catch (e) {
+    if (e.name !== 'AbortError') console.error(e);
+  } finally {
+    currentAbort = null;
+    updateVisibility();
+  }
 }
+
 
 function onEachFeature(feature, layer){
   layer.on('click', () => {
@@ -129,8 +228,46 @@ function onEachFeature(feature, layer){
   });
 }
 
+function updateVisibility(){
+  const z = map.getZoom();
 
+  // Visibilité automatique selon le zoom (l’utilisateur peut toujours décocher dans le control)
+  if (!map.hasLayer(groupCountries)) map.addLayer(groupCountries); // Countries toujours affichés par défaut
+  if (z >= DISTRICT_Z) { if (!map.hasLayer(groupDistricts)) map.addLayer(groupDistricts); }
+  else                 { if (map.hasLayer(groupDistricts))  map.removeLayer(groupDistricts); }
 
+  if (z >= MUNIC_Z)    { if (!map.hasLayer(groupMunicipalities)) map.addLayer(groupMunicipalities); }
+  else                 { if (map.hasLayer(groupMunicipalities))  map.removeLayer(groupMunicipalities); }
+
+  // Priorité des clics (click-through via CSS pointer-events sur les panes)
+  const countriesPane      = map.getPane('countries');
+  const districtsPane      = map.getPane('districts');
+  const municipalitiesPane = map.getPane('municipalities');
+
+  // Règle simple : quand un niveau plus fin est visible, les niveaux en dessous passent en "pointer-events:none"
+  countriesPane.style.pointerEvents      = (z < DISTRICT_Z) ? 'auto' : 'none';
+  districtsPane.style.pointerEvents      = (z >= DISTRICT_Z && z < MUNIC_Z) ? 'auto' : (z >= MUNIC_Z ? 'none' : 'auto');
+  municipalitiesPane.style.pointerEvents = (z >= MUNIC_Z) ? 'auto' : 'none';
+}
+
+// À chaque fin de zoom : on rafraîchit styles + visibilité/clics
+let refreshTimer = null;
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => MAJLayersMulti(), 300);
+}
+map.on('zoomend', () => {
+  // restyle rapide
+  const z = map.getZoom();
+  [groupCountries, groupDistricts, groupMunicipalities].forEach(g=>{
+    g.eachLayer(l => { if (l.setStyle && l.options && typeof l.options.style === 'function') {
+      l.setStyle(l.options.style());
+    }});
+  });
+  updateVisibility();
+  scheduleRefresh();
+});
+map.on('moveend', scheduleRefresh);
 
 
 ////////////////  Side bar   ///////////////
@@ -340,7 +477,8 @@ document.getElementById('ma').innerText = An[1];
 document.getElementById('ca').innerText = An[2];
 document.getElementById('da').innerText = An[3];
 document.getElementById('ua').innerText = An[4];
-MAJLayers(Filtres, Filtrepays, Paysstyle); //Change les contours quand la date change
+
+MAJLayersMulti(); /*Ancien MAJLayers(Filtres, Filtrepays, Paysstyle); //Change les contours quand la date change*/
 }
 
 function Div(u){

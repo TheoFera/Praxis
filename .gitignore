@@ -22,3 +22,6 @@ coverage/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# --- Autre ---
+import_geoboundaries.js

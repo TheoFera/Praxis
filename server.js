@@ -17,13 +17,14 @@ const PORT = process.env.PORT || 3000;
 const staticDir = path.join(__dirname, 'public');
 console.log('Static dir =', staticDir);
 
-
+const compression = require('compression');
 
 // 1) Statique (sert ./public, index.html inclus)
 app.use(express.static(staticDir, { index: 'index.html' }));
 
 // 2) CORS (ok même si front et API sont sur la même origine)
 app.use(cors());
+app.use(compression());
 
 // 3) PostgreSQL
 const pool = new Pool({
@@ -53,61 +54,89 @@ app.get('/api/debug/dbinfo', async (req, res) => {
   res.json(rows[0]);
 });
 
+
 app.get('/api/frontieres', async (req, res) => {
+  const client = await pool.connect();
   try {
-    const dateStr = req.query.date;
-    if (!dateStr || !isValidISODate(dateStr)) {
-      return res.status(400).json({ error: "Paramètre 'date' requis au format YYYY-MM-DD" });
+    const dateStr = (req.query.date && isValidISODate(req.query.date))
+      ? req.query.date : new Date().toISOString().slice(0,10);
+
+    const types = (req.query.types ?? 'countries')
+      .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+    const z = Math.max(0, Math.min(22, parseInt(req.query.zoom ?? '6', 10) || 6));
+
+    // bbox "w,s,e,n"
+    let bbox = null;
+    if (req.query.bbox) {
+      const p = String(req.query.bbox).split(',').map(Number);
+      if (p.length === 4 && p.every(Number.isFinite)) bbox = p;
+    }
+    if (!bbox) {
+      // fallback : toute la planète (reste OK grâce au plan de simplification)
+      bbox = [-180,-85,180,85];
     }
 
     const sql = `
-      SELECT
-        f.id,
-        f.geojson,
-        f.date_debut,
-        f.date_fin,
-        e.id   AS entity_id,
-        e.name AS entity_name,
-        c.id   AS category_id,
-        c.name AS category_name
-      FROM frontiere f
-      INNER JOIN parent_enfant_category pec ON pec.frontiere_id = f.id
-      INNER JOIN entity_category ec         ON ec.id = pec.ec_enfant_id
-      INNER JOIN entity e                   ON e.id = ec.entity_id
-      INNER JOIN category c                 ON c.id = ec.category_id
-      WHERE (f.date_debut IS NULL OR f.date_debut <= $1::date)
-        AND (f.date_fin   IS NULL OR f.date_fin   >= $1::date);
-    `;
+      WITH src AS (
+        SELECT
+          f.id, f.date_debut, f.date_fin,
+          e.id   AS entity_id,
+          e.name AS entity_name,
+          LOWER(c.name) AS category_name,
+          CASE
+            WHEN $7 < 6  THEN f.geom_z0
+            WHEN $7 < 8  THEN f.geom_z1
+            ELSE               f.geom_z2
+          END AS g
+        FROM frontiere f
+        JOIN parent_enfant_category pec ON pec.frontiere_id = f.id
+        JOIN entity_category ec         ON ec.id = pec.ec_enfant_id
+        JOIN entity e                   ON e.id = ec.entity_id
+        JOIN category c                 ON c.id = ec.category_id
+        WHERE (f.date_debut IS NULL OR f.date_debut <= $1::date)
+          AND (f.date_fin   IS NULL OR f.date_fin   >= $1::date)
+          AND LOWER(c.name) = ANY($2::text[])
+          AND ST_Intersects(
+                CASE WHEN $7 < 6 THEN f.geom_z0
+                     WHEN $7 < 8 THEN f.geom_z1
+                     ELSE              f.geom_z2
+                END,
+                ST_MakeEnvelope($3,$4,$5,$6,4326)
+              )
+      )
+      SELECT jsonb_build_object(
+        'type','FeatureCollection',
+        'features', jsonb_agg(
+           jsonb_build_object(
+             'type','Feature',
+             'id', id,
+             'properties', jsonb_build_object(
+                 'when', ARRAY[
+                    CASE WHEN date_debut IS NULL THEN NULL ELSE to_char(date_debut,'YYYY-MM-DD') END,
+                    CASE WHEN date_fin   IS NULL THEN NULL ELSE to_char(date_fin  ,'YYYY-MM-DD') END
+                 ],
+                 'entity_id', entity_id,
+                 'entity_name', entity_name,
+                 'category_name', category_name
+             ),
+             'geometry', (ST_AsGeoJSON(g, 6)::jsonb)
+           )
+        )
+      ) AS fc
+      FROM src;`;
 
-    const { rows } = await pool.query(sql, [dateStr]);
+    const { rows } = await client.query(sql, [
+      dateStr, types, bbox[0], bbox[1], bbox[2], bbox[3], z
+    ]);
 
-    const features = rows.map(r => {
-      const g = r.geojson && r.geojson.type === 'Feature'
-        ? r.geojson
-        : { type: 'Feature', properties: {}, geometry: r.geojson || null };
-
-      if (g && g.geometry) {
-        const start = r.date_debut ? new Date(r.date_debut).toISOString().slice(0, 10) : null;
-        const end   = r.date_fin   ? new Date(r.date_fin).toISOString().slice(0, 10) : null;
-        g.geometry.when = [start, end];
-      }
-
-      g.properties = g.properties || {};
-      if ('name' in g.properties) delete g.properties.name;
-
-      g.properties.entity_id      = r.entity_id      ?? null;
-      g.properties.entity_name    = r.entity_name    ?? null;
-      g.properties.category_id    = r.category_id    ?? null;
-      g.properties.category_name  = r.category_name  ?? null;
-
-      g.id = r.id;
-      return g;
-    });
-
-    res.json({ type: 'FeatureCollection', features });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Erreur serveur' });
+    res.setHeader('Content-Type','application/json; charset=utf-8');
+    res.end(JSON.stringify(rows[0].fc ?? {"type":"FeatureCollection","features":[]}));
+  } catch (e) {
+    console.error('ERR /api/frontieres', e);
+    res.status(500).json({ error: 'server_error' });
+  } finally {
+    client.release();
   }
 });
 
