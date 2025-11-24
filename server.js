@@ -268,6 +268,32 @@ async function recomputeParentGeometry(client, frontId, ecParentId, startStr, en
 }
 
 
+async function insertFrontiereFromGeometry(client, geomObj, startStr, endStr) {
+  // Crée une frontière à partir d'un GeoJSON (geom) et renvoie la ligne insérée.
+  if (!geomObj) throw new Error('Geometry manquante pour la création de la frontière.');
+
+  const geomJSON = (typeof geomObj === 'string') ? geomObj : JSON.stringify(geomObj);
+  const sql = `
+    WITH g AS (
+      SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS geom
+    )
+    INSERT INTO frontiere(geom, geom_z0, geom_z1, geom_z2, geojson, date_debut, date_fin)
+    SELECT
+      g.geom,
+      NULL,
+      ST_SimplifyPreserveTopology(g.geom, 0.01),
+      ST_SimplifyPreserveTopology(g.geom, 0.1),
+      ST_AsGeoJSON(g.geom, 6)::jsonb,
+      $2::date,
+      $3::date
+    FROM g
+    RETURNING id, date_debut, date_fin;
+  `;
+
+  const { rows } = await client.query(sql, [geomJSON, startStr || null, endStr || null]);
+  return rows[0];
+}
+
 /************************************************************
  * POST /api/editor/apply
  * Corps JSON (simplifié) :
@@ -521,6 +547,148 @@ app.post('/api/editor/apply', async (req, res) => {
    *    - puis on met à jour les liens parent/enfant
    *    - tout ça dans UNE SEULE transaction
    ***********************/
+  if (op === 'create-entity') {
+    const parent     = body.parent || {};
+    const period     = body.period || {};
+    const selections = body.selections || {};
+    const newEntity  = body.newEntity || {};
+
+    const parentFrontiereId = parent.frontiereId;
+    const parentEcId        = parent.entityCategoryId;
+
+    const startStr = period.start;
+    const endStr   = period.end;
+
+    const rawAdd    = Array.isArray(selections.add)    ? selections.add    : [];
+    const rawRemove = Array.isArray(selections.remove) ? selections.remove : [];
+    const addList    = rawAdd.map(Number).filter(Number.isInteger);
+    const removeList = rawRemove.map(Number).filter(Number.isInteger);
+
+    const name     = (newEntity.name || '').trim();
+    const category = (newEntity.category || '').trim().toLowerCase();
+    const geometry = body.geometry || body.newGeometry || null;
+
+    const problems = [];
+    if (!name) problems.push('Nom de la nouvelle entité manquant.');
+    if (!category) problems.push('Catégorie de la nouvelle entité manquante.');
+    if (!parentEcId || !parentFrontiereId) {
+      problems.push('Entité parente mal définie (frontière ou category id manquant).');
+    }
+    if (!startStr || !isValidISODate(startStr)) problems.push('Date de début invalide ou manquante.');
+    if (!endStr   || !isValidISODate(endStr))   problems.push('Date de fin invalide ou manquante.');
+    if (startStr && endStr && isValidISODate(startStr) && isValidISODate(endStr)) {
+      const d1 = new Date(startStr);
+      const d2 = new Date(endStr);
+      if (d1.getTime() > d2.getTime()) problems.push('La date de début doit être <= à la date de fin.');
+    }
+    if (!geometry) problems.push('Aucune géométrie fournie pour la nouvelle entité (lance la prévisualisation).');
+
+    if (problems.length > 0) {
+      return res.status(400).json({ ok: false, error: problems.join(' ') });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const catRes = await client.query(
+        'SELECT id FROM category WHERE LOWER(name) = LOWER($1) LIMIT 1',
+        [category]
+      );
+      if (catRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ ok: false, error: `Catégorie "${category}" inconnue.` });
+      }
+      const categoryId = catRes.rows[0].id;
+
+      const entRes = await client.query(
+        'INSERT INTO entity(name) VALUES ($1) RETURNING id',
+        [name]
+      );
+      const entityId = entRes.rows[0].id;
+
+      const ecRes = await client.query(
+        'INSERT INTO entity_category(entity_id, category_id) VALUES ($1, $2) RETURNING id',
+        [entityId, categoryId]
+      );
+      const newEcId = ecRes.rows[0].id;
+
+      const newFrontiere = await insertFrontiereFromGeometry(client, geometry, startStr, endStr);
+      if (!newFrontiere) throw new Error('Création de la frontière échouée.');
+      const newFrontiereId = newFrontiere.id;
+
+      if (parentEcId && parentFrontiereId) {
+        await client.query(
+          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+           VALUES ($1, $2, $3)`,
+          [parentEcId, newEcId, newFrontiereId]
+        );
+
+        await client.query(
+          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+           SELECT $1, $2, $3
+           WHERE NOT EXISTS (
+             SELECT 1 FROM parent_enfant_category
+             WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
+           )`,
+          [parentEcId, newEcId, parentFrontiereId]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+           VALUES (NULL, $1, $2)`,
+          [newEcId, newFrontiereId]
+        );
+      }
+
+      let addedCount = 0;
+      let removedCount = 0;
+      for (const childId of addList) {
+        const r = await client.query(
+          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+           SELECT $1, $2, $3
+           WHERE NOT EXISTS (
+             SELECT 1 FROM parent_enfant_category
+             WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
+           )`,
+          [newEcId, childId, newFrontiereId]
+        );
+        addedCount += r.rowCount;
+      }
+      for (const childId of removeList) {
+        const r = await client.query(
+          `DELETE FROM parent_enfant_category
+           WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3`,
+          [newEcId, childId, newFrontiereId]
+        );
+        removedCount += r.rowCount;
+      }
+
+      if (parentFrontiereId && parentEcId) {
+        await recomputeParentGeometry(client, parentFrontiereId, parentEcId, startStr, endStr);
+      }
+
+      await client.query('COMMIT');
+      return res.json({
+        ok: true,
+        result: {
+          operation: 'create-entity',
+          entityId,
+          entityCategoryId: newEcId,
+          frontiereId: newFrontiereId,
+          addedChildren: addedCount,
+          removedChildren: removedCount
+        }
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Erreur /api/editor/apply (create-entity) :', err);
+      return res.status(500).json({ ok: false, error: 'Erreur serveur lors de la création de la nouvelle entité.' });
+    } finally {
+      client.release();
+    }
+  }
+
   if (op === 'edit-borders-dates') {
     const parent     = body.parent || {};
     const period     = body.period || {};
@@ -677,6 +845,107 @@ app.post('/api/editor/apply', async (req, res) => {
    *    - Rattache cet enfant à un nouveau parent (trouvé par nom + date)
    *    - Recalcule les deux géométries (Ancien Parent et Nouveau Parent)
    ***********************/
+  if (op === 'duplicate-entity') {
+    const parent     = body.parent || {};
+    const period     = body.period || {};
+    const selections = body.selections || {};
+
+    const frontId    = parent.frontiereId;
+    const ecParentId = parent.entityCategoryId;
+
+    const startStr = period.start;
+    const endStr   = period.end;
+    const geometry = body.geometry || body.newGeometry || null;
+
+    const rawAdd    = Array.isArray(selections.add)    ? selections.add    : [];
+    const rawRemove = Array.isArray(selections.remove) ? selections.remove : [];
+    const addList    = rawAdd.map(Number).filter(Number.isInteger);
+    const removeList = rawRemove.map(Number).filter(Number.isInteger);
+
+    const problems = [];
+    if (!frontId)    problems.push('frontiereId source manquant pour duplicate-entity.');
+    if (!ecParentId) problems.push('entityCategoryId manquant pour duplicate-entity.');
+    if (!startStr || !isValidISODate(startStr)) problems.push('Date de début invalide ou manquante.');
+    if (!endStr   || !isValidISODate(endStr))   problems.push('Date de fin invalide ou manquante.');
+    if (startStr && endStr && isValidISODate(startStr) && isValidISODate(endStr)) {
+      const d1 = new Date(startStr);
+      const d2 = new Date(endStr);
+      if (d1.getTime() > d2.getTime()) problems.push('La date de début doit être <= à la date de fin.');
+    }
+    if (!geometry) problems.push('Aucune géométrie fournie (utilise la prévisualisation).');
+
+    if (problems.length > 0) {
+      return res.status(400).json({ ok: false, error: problems.join(' ') });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const checkFront = await client.query('SELECT id FROM frontiere WHERE id = $1', [frontId]);
+      if (checkFront.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ ok: false, error: `Frontière source ${frontId} introuvable.` });
+      }
+
+      const newFront = await insertFrontiereFromGeometry(client, geometry, startStr, endStr);
+      if (!newFront) throw new Error('Création de la nouvelle frontière échouée.');
+      const newFrontiereId = newFront.id;
+
+      await client.query(
+        `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+         SELECT ec_parent_id, ec_enfant_id, $1
+         FROM parent_enfant_category
+         WHERE frontiere_id = $2`,
+        [newFrontiereId, frontId]
+      );
+
+      let addedCount = 0;
+      let removedCount = 0;
+      for (const childId of addList) {
+        const r = await client.query(
+          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+           SELECT $1, $2, $3
+           WHERE NOT EXISTS (
+             SELECT 1 FROM parent_enfant_category
+             WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
+           )`,
+          [ecParentId, childId, newFrontiereId]
+        );
+        addedCount += r.rowCount;
+      }
+      for (const childId of removeList) {
+        const r = await client.query(
+          `DELETE FROM parent_enfant_category
+           WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3`,
+          [ecParentId, childId, newFrontiereId]
+        );
+        removedCount += r.rowCount;
+      }
+
+      const recomputed = await recomputeParentGeometry(client, newFrontiereId, ecParentId, startStr, endStr);
+
+      await client.query('COMMIT');
+      return res.json({
+        ok: true,
+        result: {
+          operation: 'duplicate-entity',
+          sourceFrontiereId: frontId,
+          newFrontiereId,
+          added: addedCount,
+          removed: removedCount,
+          recomputedFrontiere: recomputed
+        }
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Erreur /api/editor/apply (duplicate-entity) :', err);
+      return res.status(500).json({ ok: false, error: 'Erreur serveur lors de la duplication.' });
+    } finally {
+      client.release();
+    }
+  }
+
   if (op === 'change-parent') {
     const child         = body.child || {};
     const newParentData = body.newParent || {};
