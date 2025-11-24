@@ -12,6 +12,7 @@
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A==" crossorigin=""/>
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA==" crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
     <!-- <script type="text/javascript" src="./Data/datafrance.geojson"></script> -->
     <script type="text/javascript" src="./Data/datasociete.json"></script>
@@ -30,7 +31,7 @@
                 <div method="get">
                     <div id="cont-searchbar">
                     <input id="searchbar"  type= "text" placeholder= "Rechercher..." />
-                    <img id="loupe-searchbar" type= "image" src="./Image/loupe.svg" />
+                    <img id="searchBtn" type= "button" src="./Image/loupe.svg" />
                     </div>
                     <ul id="liste-searchbar">
                     </ul>

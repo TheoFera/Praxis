@@ -1,378 +1,217 @@
-body {
-    padding: 0;
-    margin: 0;
-}
+/* ===== Reset & base ===== */
+body { margin: 0; padding: 0; }
+p { font-family: 'Overpass'; color: #000; }
+html, body, #mapid { height: 100%; width: 100%; overflow: hidden; }
+*, *::before, *::after { box-sizing: border-box; }
 
-p{
-    font-family: 'Overpass';
-    color: black;
-}
+/* ===== Carte / contrôles Leaflet ===== */
+.content { height: 100vh; transition: .3s; }
+.leaflet-control-layers-toggle { z-index: 950 !important; }
 
-html, body, #mapid {
-    height: 100%;
-    width: 100%;
-    overflow:hidden;   
-}
-
-.content {
-    transition: 0.3s;
-    height: 100vh;
-}
-
-.leaflet-control-layers-toggle    { z-index: 950!important; }   /* tous les contrôles de la map leaflet  */
-
-/******Bar avec la date en haut à droite******/
+/* ===== Time bar (inchangé) ===== */
 .time-bar{
-    position: fixed;
-    width : 175.375px;
-    height : 30px;
-    background: white;
-    right: 0;
-    margin-right: 20px;
-    margin-top: 20px;
-    border-radius : 4px;
-    border-color: black;
-    z-index: 950;
-    font-size: 0;
+  position: fixed; right: 0; margin: 20px; width:175.375px; height:30px;
+  background:#fff; border-radius:4px; z-index: 1200; font-size:0;
 }
-/*Flèches pour changer*/
-.structureHaut{
-    left: 1.7px;
-    width : 171.375px;
-    z-index: 1003;
-    position: absolute;
-    bottom: 24.8px;
+.structureHaut{ position:absolute; left:1.7px; bottom:24.8px; width:171.375px; z-index: 1203; }
+.structureBas{ position:absolute; left:1.7px; top:25px;     width:171.375px; z-index: 1204; }
+.structureHaut>img,.structureBas>img{ display:inline-block; opacity:0; }
+.structureHaut>img:hover,.structureBas>img:hover{ opacity:.75; }
+.structureHaut>img.active,.structureBas>img.active{ opacity:1; }
+#dm-plus,#dm-moins{ padding-left:10.5px; } #dma-plus,#dma-moins{ padding-left:20px; }
+#uj-plus,#uj-moins,#um-plus,#um-moins,#ma-plus,#ma-moins,#ca-plus,#ca-moins,#da-plus,#da-moins,#ua-plus,#ua-moins{ padding-left:.6px; }
+.inttime-bar{ width:171.375px; height:26px; margin:2px 1.25px; z-index:1202; }
+#time-tiret,#time-barre{ width:8px; background:#fff; }
+.inttime-bar>div{ width:14.375px; height:26px; background:whitesmoke; margin:0 .75px; display:inline-block; }
+.inttime-bar>div>p{ font-size:20px; margin:2px 0 0; text-align:center; }
 
-}
-.structureBas{
-    left: 1.7px;
-    position: absolute;
-    z-index: 1004;
-    width : 171.375px;
-    top: 25px;
-}
-
-.structureHaut>img, .structureBas>img{
-    display: inline-block;
-    opacity: 0;
-}
-.structureHaut>img:hover, .structureBas>img:hover{
-    opacity: 0.75;
-}
-.structureHaut>img.active, .structureBas>img.active{
-    opacity: 1;
-}
-
-#dm-plus, #dm-moins{
-    padding-left:10.5px;
-}
-#dma-plus, #dma-moins{
-    padding-left:20px;
-}
-#uj-plus, #uj-moins, #um-plus, #um-moins, #ma-plus, #ma-moins, #ca-plus, #ca-moins,#da-plus, #da-moins, #ua-plus, #ua-moins{
-    padding-left:0.6px;
-}
-
-/*Chiffres*/
-.inttime-bar{
-    width : 171.375px;
-    height : 26px;
-    margin-left: 1.25px;
-    margin-right: 1.25px;
-    margin-top:2px;
-    margin-bottom: 2px;
-    z-index: 1002;
-}
-
-#time-tiret{
-    width: 8px;
-    background-color: white;
-}
-
-#time-barre{
-    width: 8px;
-    background-color: white;
-}
-
-.inttime-bar>div{
-    width: 14.375px;
-    height : 26px;
-    background-color: whitesmoke;
-    margin-left:0.75px;
-    margin-right:0.75px;
-    display: inline-block;
-}
-
-.inttime-bar>div>p{
-    font-size: 20px;
-    margin-top: 2px;
-    margin-bottom: 0;
-    text-align: center;
-    vertical-align: middle;
-}
-
-/*****************SideBar******************/
+/* =========================================================
+   SIDEBAR (desktop) — panneau latéral au-dessus de la carte
+   ========================================================= */
 #side-bar{
-    position: fixed;
-    width : 408px;
-    height: 100%;
-    background: white;
-    left: -408px;
-    transition: .3s ease-out;
-    z-index: 1000;
-    border-right: grey;
-    border-right: 10px;
+  position: fixed;
+  top: 0; left: -408px;               /* hors écran par défaut */
+  width: 408px; height: 100%;
+  background: #fff;
+  /*border-right: 1px solid #e5e5e5;*/
+  transition: left .3s ease-out;
+  z-index: 3000;                      /* >>> au-dessus de la carte */
+  overflow-x: hidden;
 }
-#side-bar-container{
-    display: inline-block;
-    height: 100%;
-    padding-right: -7px;
-    overflow-y: hidden;
-}
-#side-bar-container:hover{
-    overflow-y: overlay;
-}
-/*scrollbar de la sidebar*/
-::-webkit-scrollbar {
-    width: 6px;
+#side-bar.active{ left: 0; }
+
+/* conteneur avec scroll vertical */
+.side-bar-container{
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;              /* <<< c'est lui qui scrolle */
+  -webkit-overflow-scrolling: touch;
+  padding-top: 56px;             /* place sous la searchbar (≈ 56px) */
 }
 
-::-webkit-scrollbar-track {
-box-shadow: inset 0 0 2px #f1f3f4;
-background-color: #f1f3f4;
+/* bannière + titres (positionnés) */
+#properties-img{
+  position: absolute; top: 0; left: 0;
+  width: 408px; height: 240px; z-index: 3001;
 }
-::-webkit-scrollbar-thumb{
-background-color: #70757a;
+#titresidebar{
+  position: absolute; top: 240px; left: 0; right: 0;
+  margin: 15px; line-height: 1.75rem; z-index: 3001;
+}
+#titre{ font-size: 1.375rem; margin: 0; }
+#sous-titre{ font-size: .9rem; color: #70757a; margin: 0; }
+
+/* contenu (sous bannière + titres) avec scroll interne */
+#contenu{
+  margin: 320px 16px 16px;       /* 240 (image) + ~80 (titres) */
+  overflow: visible;             /* <<< pas de scroll ici */
+  max-height: none;              /* <<< pas de limite de hauteur */
 }
 
-
-/*Search bar */
-#cont-searchbar {
-    position: absolute;
-    z-index: 1010;
-    width: 97.5%;
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    padding-top: 10px;
+/* ===== Searchbar en haut de la sidebar (type Google Maps) ===== */
+#cont-searchbar{
+  position: absolute; top: 8px; left: 16px; right: 16px;
+  z-index: 3010;
 }
 #searchbar{
-	border-radius: 15px;
-    border: 0.5px solid rgb(221 219 206);
-	color: #555656;
-    width: calc(100% - 9px);
-    padding-top: 11px;
-    padding-bottom: 11px;
-    outline: none;
-    background: white;
-    font-size: 0.9rem;
-    padding-left: 24px;
-	padding-right: 50px;
+  width: 100%;
+  padding: 11px 44px 11px 24px;
+  background: #fff; color: #555656; font-size: .9rem;
+  border: .5px solid #ddd; border-radius: 15px; outline: none;
 }
-#loupe-searchbar {
-    position: absolute;
-    padding-left: 10px;
-    padding-bottom: 3px;
-    width: 26px;
-    cursor: pointer;
-    transform: scaleX(-1);
+#searchbar::-webkit-search-cancel-button{
+  -webkit-appearance: none;
+  background-image: url('./image/cross.svg');
+  background-size: 16px 16.5px; width: 16px; height: 16.5px; cursor: pointer;
+  margin-right: -6px;
 }
-#searchbar::-webkit-search-cancel-button {
-    -webkit-appearance: none;
-    background-image: url('./image/cross.svg');
-    background-size: 16px 16.5px;
-    width: 16px;
-    height: 16.5px;
-    cursor: pointer;
-    color: #555656;
-    margin-right: -6px;
+#searchBtn{
+  position: absolute; top: 50%; right: 24px; transform: translateY(-50%) scaleX(-1);
+  width: 22px; cursor: pointer;
+}
+/* suggestions sous la barre */
+#liste-searchbar{
+  position: absolute; left: 0; right: 0; top: 48px;
+  margin: 8px 0 0; padding: 0; list-style: none; z-index: 3010;
+}
+#liste-searchbar li{
+  font-family: 'Overpass'; font-size: .9rem;
+  background:#fff; color:#000; border:1px solid #ddd; padding:6px; cursor:pointer;
+}
+#liste-searchbar li:hover{ background:#eee; }
+
+/* ===== Masquer la bannière quand vide / en éditeur ===== */
+#properties-img[src=""]{ display:none; }
+.editor #properties-img{ display:none; }
+.no-banner #titresidebar{
+  position: static !important;   /* <<< n'est plus absolu */
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  margin: 16px;                  /* marge standard */
+}
+/* Et le contenu suit directement sous le titre */
+.no-banner #contenu{
+  margin: 0 16px 16px;           /* plus de gros offset haut */
+  overflow: visible;
+  max-height: none;
 }
 
-#properties-img {
-    position:absolute;
-    left:0px;
-    top:0px;
-    width: 408px;
-    height: 240px;
-    z-index: 1001;
-}
-/* ///////////// Search bar choix*/
+/* ===== Anti-débordements dans la sidebar ===== */
+#side-bar input, #side-bar button, #side-bar select, #side-bar .field{ max-width: 100%; }
 
-#liste-searchbar {
-z-index: 1010;
-position: absolute;
-list-style-type: none;
-padding: 0px;
-margin-left: 30px ; 
-margin-top: 50px;
-width: calc(100% - 16%);
-
-}
-
-#liste-searchbar li {
-font-family: 'Overpass';
-font-size: 0.9rem;
-border: 1px solid #ddd;
-cursor: pointer;
-/*margin-top: -1px;  Prevent double borders */
-color:#555656 ;
-background-color: white;
-text-decoration: none;
-padding: 6px;
-color: black;
-display: block
-}
-
-#liste-searchbar li:hover:not(.header) {
-background-color: #eee;
-}
-
-
-#titresidebar{
-    position: absolute;
-    top: 240px;
-    margin: 15px;
-    line-height: 1.75rem;
-}
-#titre{
-    font-size: 1.375rem;
-    margin:0;
-}
-#sous-titre{
-    font-size: 0.9rem;
-    color: #70757a;
-    margin: 0;
-    padding: 0;
-
-}
-
+/* ===== Languette (desktop) ===== */
 .toggle-button{
-    margin: 0;
-    position :fixed;
-    left: 0px;
-    top: 46.5%;
-    width: 20px;
-    height : 60px;
-    border-top-right-radius: 6px;
-    border-bottom-right-radius: 6px;
-    background:whitesmoke;
-    display:block;
-    transition: .3s ease-out;
-    z-index: 1010;
-    box-shadow: 0.5px 0.5px 1px #70757A;
+  position: fixed; left: 0; top: 46.5%;
+  width: 20px; height: 60px;
+  background: whitesmoke; border-top-right-radius: 6px; border-bottom-right-radius: 6px;
+  box-shadow: .5px .5px 1px #70757A;
+  display: block; z-index: 3100; transition: left .3s ease-out;
 }
+#toggle-button-image{ position: relative; top: 20px; max-width: 100%; transition: .3s; }
+#side-bar.active .toggle-button{ left: 408px; }
+#side-bar.active #toggle-button-image{ transform: rotate(180deg); }
 
-#toggle-button-image {
-    position: relative;
-    top: 20px;
-    max-width: 100%;
-    max-height: 100%;
-    max-width: 100%;
-    transition: .3s ease-out;  
-}
+/* ===== Scrollbar (optionnel) ===== */
+::-webkit-scrollbar{ width: 6px; }
+::-webkit-scrollbar-track{ background:#f1f3f4; box-shadow: inset 0 0 2px #f1f3f4; }
+::-webkit-scrollbar-thumb{ background:#70757a; }
 
-
-#side-bar.active{
-    left: 0;
-}
-
-#side-bar.active .toggle-button{
-    left : 408px;
-    transition: .3s ease-out;
-
-}
-#side-bar.active #toggle-button-image{
-    transform: rotate(180deg);
-}
-
-.side-bar-container{
-    overflow-y:auto;                 /* seul endroit qui scroll */
-    -webkit-overflow-scrolling:touch;/* inertie iOS */
-    flex:1 1 auto;                   /* prend toute la hauteur dispo */
-}
-
-#contenu{
-    height: 100%;
-    /*margin-left: 15px;
-    margin-top: 15px;*/
-}
-
-/* ─── Breakpoint mobile (<=600 px) ─────────────────────────── */
+/* =========================================================
+   MOBILE (<=600px) — panneau en bottom-sheet
+   ========================================================= */
 @media (max-width:600px){
 
-    /* bottom-sheet */
-    #side-bar{
-        left:0;
-        bottom:0;
-        top:auto;
-        width:100%;
-        height:60vh;                          /* hauteur ouverte        */
-        transform:translateY(calc(100% - 25px)); /* fermé : 40 px visibles */
-        transition:transform .3s ease-out;
-        border-radius:16px 16px 0 0;
-        /*overflow-y:auto;                      /* seul endroit scrollable */
-        /*-webkit-overflow-scrolling:touch;     /* inertie iOS            */
-    }
-    #side-bar.active{ transform:translateY(0); }
-    
-    .side-bar-container {
-        overflow-y: auto;
-        height: 100%;
-        -webkit-overflow-scrolling: touch;
-        display: flex;
-        flex-direction: column;
-    }
+  /* 1) Le panneau mobile ne scrolle pas. Une seule zone scrollera : .side-bar-container */
+  #side-bar{
+    left: 0; right: 0; width: 100%;
+    bottom: 0; top: auto;
+    height: 60vh;
+    transform: translateY(calc(100% - 25px));   /* fermé : languette visible */
+    border-radius: 16px 16px 0 0;
+    transition: transform .3s ease-out;
+    overflow: hidden;                            /* <<< empêche le 2e scroll */
+    position: fixed;                             /* reste au-dessus de la carte */
+    z-index: 3000;
+  }
+  #side-bar.active{ transform: translateY(0); }
 
-    /* languette (pleine largeur) */
-    .toggle-button{
-        position:sticky;
-        top:0;
-        left:0;
-        width:100%;
-        height:25px;                          /* << hauteurs liées */
-        background:#e5e5e5;
-        border-radius:16px 16px 0 0;
-        display:flex;
-        justify-content:center;
-        align-items:center;
-        cursor:pointer;
-        z-index:1100;                         /* au-dessus de la search-bar */
-    }
+  /* 2) La seule zone scrollable (contenu réel) = container, sous la languette */
+  .side-bar-container{
+    display: flex;
+    flex-direction: column;
+    height: calc(60vh - 25px);   /* 25px = languette */
+    overflow-y: auto;            /* <<< une seule barre de scroll */
+    -webkit-overflow-scrolling: touch;
+    padding-top: 0;              /* <<< searchbar n'est plus absolue en mobile */
+  }
 
-    /* petite icône de flèche, centrée */
-    #toggle-button-image{
-        width:22px;
-        transform:rotate(-90deg);     /* 90° antihoraire = pointe vers le haut */
-        transition:transform .3s ease;
-        top:auto!important;           /* on annule le top:20px d’origine */
-        position:static;              /* plus de décalage vertical */
-    }
-    #side-bar.active #toggle-button-image{ transform:rotate(90deg); }
-    
+  /* 3) La languette ne défile pas (reste en haut du panneau) */
+  .toggle-button{
+    position: absolute;                          /* <<< ne scrolle plus */
+    top: 0; left: 0; right: 0;
+    width: 100%; height: 25px;
+    background: #e5e5e5;
+    border-radius: 16px 16px 0 0;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; z-index: 3100;
+  }
+  #toggle-button-image{
+    width: 22px; position: static; top: auto !important;
+    transform: rotate(-90deg); transition: transform .3s ease;
+  }
+  #side-bar.active #toggle-button-image{ transform: rotate(90deg); }
 
-    #properties-img,
-    #titresidebar {
-        position: static !important;
-        width: 100%;
-        top: unset !important;
-        left: unset !important;
-        margin: 0;
-    }
-    #titresidebar {
-        margin-top: 8px;
-        margin-left: 16px;
-        margin-right: 16px;
-    }
+  /* 4) Bannière & titres redeviennent en flux normal */
+  #properties-img, #titresidebar{
+    position: static !important;
+    width: 100%;
+    margin: 0;
+    top: unset !important;
+    left: unset !important;
+  }
+  #titresidebar{ margin: 8px 16px 0; }
 
-    /* search-bar : on la pousse sous la languette */
-    #cont-searchbar{
-        /*position:static;*/
-        width:100%;
-        padding:16px 16px 8px;   /* 40 px languette + 16 px marge */
-        box-sizing:border-box;
-    }
-    #searchbar{ width:100%; }
+  /* 5) Searchbar sous la languette (pas de position absolue en mobile) */
+  #cont-searchbar{
+    position: static;
+    width: 100%;
+    padding: 16px 16px 8px;
+    box-sizing: border-box;
+  }
+  #liste-searchbar{
+    position: static;
+    margin: 8px 16px 0;
+  }
 
-    /* on annule l’ancienne règle desktop qui déplaçait la languette */
-    #side-bar.active .toggle-button{ left:0!important; }
+  /* 6) Le bloc contenu ne crée pas un second scroll interne en mobile */
+  #contenu{
+    margin: 8px 16px 16px;
+    max-height: none;
+    overflow: visible;                           /* <<< pas de scroll interne */
+  }
+
+  /* 7) Annule le décalage desktop de la languette */
+  #side-bar.active .toggle-button{ left: 0 !important; }
 }

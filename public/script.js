@@ -19,6 +19,89 @@
 const toggleButton = document.getElementById('toggle-button');
 const sideBar = document.getElementById('side-bar');
 
+function hideBanner() {
+  const img = document.getElementById('properties-img');
+  if (img) img.src = '';                 // déclenche la règle CSS [src=""] => display:none
+  sideBar?.classList.add('no-banner');
+}
+function showBanner(src) {
+  const img = document.getElementById('properties-img');
+  if (img) img.src = src || '';
+  if (src) sideBar?.classList.remove('no-banner');
+  else     sideBar?.classList.add('no-banner');
+}
+
+// Récupération des éléments de la sidebar (searchbar + zones de texte)
+const searchInput = document.getElementById('searchbar');
+const searchBtn   = document.getElementById('searchBtn');
+const sideContent = document.getElementById('contenu');    // zone de contenu
+const sideTitle   = document.getElementById('titre');      // titre
+const sideSub     = document.getElementById('sous-titre'); // sous-titre
+
+// Sécurités : si l’HTML n’est pas encore chargé, attendre le DOM ready
+if (!searchInput || !searchBtn) {
+  document.addEventListener('DOMContentLoaded', () => {
+    initSearchbarListeners();
+  });
+} else {
+  initSearchbarListeners();
+}
+
+function initSearchbarListeners() {
+  const input = document.getElementById('searchbar');
+  const btn   = document.getElementById('searchBtn');
+
+  if (!input || !btn) return;
+
+  // 1) Touche "Entrée" au clavier dans l'input
+  input.addEventListener('keydown', (e) => {
+    console.log("Press Enter")
+    if (e.key === 'Enter') {
+      const value = input.value || '';
+      if (handleSearchCommand(value)) return; // commande spéciale gérée : mode éditeur
+      runNormalSearch(value);                 // sinon faire une recherche normale
+    }
+  });
+
+  // 2) Clic sur le bouton OK loupe pour démarrer la recherche (searchBtn)
+  btn.addEventListener('click', () => {
+    const value = input.value || '';
+    if (handleSearchCommand(value)) return; // commande spéciale gérée : vérifie si on passe ou non au mode éditeur
+    runNormalSearch(value); // sinon faire une recherche normale
+  });
+}
+
+// Recherche "normale" (temporaire) : pour l’instant, on affiche juste une info
+function runNormalSearch(value) {
+  // À brancher plus tard sur ta vraie logique de recherche.
+  // Pour ne pas te casser le flux maintenant, on met un simple feedback.
+  if (sideContent) {
+    hideBanner();
+    //sideBar?.classList.add('active');
+    //if (sideTitle) sideTitle.innerText = 'Recherche';
+    //if (sideSub)   sideSub.innerText   = value ? `“${value}”` : '';
+    sideContent.innerHTML = `<div>Recherche simple non encore branchée. Tape <code>editeur</code> pour activer l’éditeur.</div>`;
+  }
+}
+
+
+
+////////////// Mode editeur ////////////
+let editorMode = false;        // drapeau qui dit si on est en mode éditeur
+let previousSidebarHTML = "";  // pour restaurer la sidebar quand on quitte l’éditeur
+
+let selectionActive = false;                 // bouton ON/OFF de sélection
+const selectedAddIds    = new Set();         // enfants à AJOUTER (vert)
+const selectedRemoveIds = new Set();         // enfants à RETIRER (rouge)
+const selectedLayers    = new Map();         // id -> layer courant (références éphémères)
+
+let parentLayer = null;                      // layer de la mère
+let parentGeom  = null;                      // géométrie GeoJSON de la mère
+
+let draftGroup = null;                       // future couche de preview (union, etc.)
+
+
+
 ////////////////// Partie sur le Geojson //////////////////
 
 // --- Initialisation de la carte ---
@@ -40,6 +123,8 @@ var southWest = L.latLng(-89.98155760646617, -180),
     northEast = L.latLng(89.99346179538875, 180);
 var bounds = L.latLngBounds(southWest, northEast);
 map.setMaxBounds(bounds);
+// Couche dédiée aux aperçus/drafts (créée une fois que 'map' existe)
+draftGroup = L.layerGroup().addTo(map);
 
 let currentAbort = null;
 function abortPending() {
@@ -210,23 +295,129 @@ async function MAJLayersMulti() {
 
 
 function onEachFeature(feature, layer){
+  const props = feature.properties || {};
+  const entityId          = props.entity_id;
+  const entityCategoryId  = props.entity_category_id;
+  const parentNameFromGeo = props.parent_name; // <--- Récupéré du GeoJSON modifié
+  const lvl               = levelFromCategoryName(props.category_name);
+  
   layer.on('click', () => {
     sideBar.classList.add('active');
 
-    // Nom prioritaire : entity_name (depuis la BDD).
-    // Fallback éventuel : properties.name (si présent dans le GeoJSON).
-    const entityName   = feature.properties?.entity_name ?? 'Nom inconnu';
-    const categoryName = feature.properties?.category_name ?? 'Catégorie inconnue';
-    
-    console.log('Feature au clic →', feature.properties);
+    const entityName   = props.entity_name ?? 'Nom inconnu';
+    const categoryName = props.category_name ?? 'Catégorie inconnue';
 
-    document.getElementById('titre').innerText = entityName;
-    document.getElementById('sous-titre').innerText = categoryName;
+    const titreEl = document.getElementById('titre');
+    const sousEl  = document.getElementById('sous-titre');
+    if (titreEl) titreEl.innerText = entityName;
+    if (sousEl)  sousEl.innerText  = categoryName;
 
-    // (Optionnel) Nettoyer l'image/bannière si tu n'en as pas ici :
-    // document.getElementById('properties-img').src = '';
+    if (!editorMode) return;
+
+    const childKey = (entityCategoryId != null) ? entityCategoryId : entityId;
+
+    // A) SÉLECTION D'ENFANTS (Inchangé...)
+    if (selectionActive && lvl && lvl === editor.granularity && childKey != null) {
+       // ... (Ton code existant pour selectedAddIds / RemoveIds) ...
+       // (Je ne le répète pas pour gagner de la place, garde ton bloc A actuel)
+       const kind = classifyChildSelection(feature); 
+       if (kind === 'add') {
+          if (selectedAddIds.has(childKey)) { selectedAddIds.delete(childKey); selectedLayers.delete(childKey); applyDefaultStyle(layer, lvl); }
+          else { selectedAddIds.add(childKey); selectedRemoveIds.delete(childKey); selectedLayers.set(childKey, layer); layer.setStyle(styleAdd()); }
+       } else {
+          if (selectedRemoveIds.has(childKey)) { selectedRemoveIds.delete(childKey); selectedLayers.delete(childKey); applyDefaultStyle(layer, lvl); }
+          else { selectedRemoveIds.add(childKey); selectedAddIds.delete(childKey); selectedLayers.set(childKey, layer); layer.setStyle(styleRemove()); }
+       }
+       if (typeof window.__editorRefreshSelectionCounter === 'function') window.__editorRefreshSelectionCounter();
+       return; 
+    }
+
+    // B) CHOIX DE L'ENTITÉ (Mère ou Change-Parent)
+    if (!selectionActive && !editor.parentLocked) {
+      
+      // --- 1. CAS : Sélection de la DESTINATION (Nouveau Parent) ---
+      if (editor.operation === 'change-parent' && editor.pickingTarget === 'newParent') {
+        editor.newParent = {
+          id: entityId,
+          name: entityName,
+          category: categoryName
+        };
+        editor.pickingTarget = 'child'; // On remet le curseur sur child par sécurité
+        
+        // ★ RAFRAÎCHISSEMENT IMMÉDIAT DU PANNEAU
+        if (sideContent) {
+           sideContent.innerHTML = renderEditorPanel();
+           attachEditorPanelEvents();
+        }
+        return; 
+      }
+
+      // --- 2. CAS : Sélection de l'ENFANT (Entité à déplacer ou Mère standard) ---
+      if (parentLayer) {
+        const oldLvl = levelFromCategoryName(parentLayer.feature?.properties?.category_name);
+        applyDefaultStyle(parentLayer, oldLvl);
+      }
+
+      editor.selectedParent = {
+        id:               entityId ?? null,
+        entityCategoryId: entityCategoryId ?? null,
+        name:             entityName,
+        category:         categoryName,
+        currentParentName: parentNameFromGeo // Stocké pour l'affichage
+      };
+      editor.parentLevel = lvl || null;
+
+      const frontiereId = (feature.properties && feature.properties.frontiere_id) ?? feature.id ?? null;
+      editor.parentFrontiereId = frontiereId;
+
+      parentLayer = layer;
+      parentGeom  = feature.geometry;
+      parentLayer.setStyle(styleParent());
+
+      // Logique dates (inchangée)
+      const when = feature.properties?.when;
+      if (Array.isArray(when)) {
+        const [wStart, wEnd] = when;
+        if (wStart) editor.startDate = wStart;
+        if (wEnd)   editor.endDate   = wEnd;
+      }
+      
+      if (lvl === 'countries') editor.granularity = 'districts';
+      else if (lvl === 'districts') editor.granularity = 'municipalities';
+
+      // ★ RAFRAÎCHISSEMENT IMMÉDIAT (CRITIQUE POUR UX)
+      // Si on est en mode change-parent, on veut voir le bouton se mettre à jour tout de suite
+      if (editor.operation === 'change-parent') {
+         if (sideContent) {
+           sideContent.innerHTML = renderEditorPanel();
+           attachEditorPanelEvents();
+         }
+      } else {
+         // Mode standard
+         const view = document.getElementById('editor-parent-view');
+         if (view) {
+            const span = view.querySelector('span');
+            if (span) span.textContent = `${editor.selectedParent.name} (${editor.selectedParent.category})`;
+         }
+         const msg  = document.getElementById('editor-msg');
+         if (msg) renderSummary(msg);
+      }
+    }
   });
+
+  // Restauration du style au chargement si nécessaire (inchangé)
+  const existingChildKey = (entityCategoryId != null) ? entityCategoryId : entityId;
+  if (existingChildKey != null) {
+    if (selectedAddIds.has(existingChildKey)) { selectedLayers.set(existingChildKey, layer); layer.setStyle(styleAdd()); } 
+    else if (selectedRemoveIds.has(existingChildKey)) { selectedLayers.set(existingChildKey, layer); layer.setStyle(styleRemove()); }
+  }
+  if (editor.selectedParent && entityId === editor.selectedParent.id) {
+    parentLayer = layer;
+    parentGeom  = feature.geometry;
+    layer.setStyle(styleParent());
+  }
 }
+
 
 function updateVisibility(){
   const z = map.getZoom();
@@ -259,11 +450,32 @@ function scheduleRefresh() {
 map.on('zoomend', () => {
   // restyle rapide
   const z = map.getZoom();
-  [groupCountries, groupDistricts, groupMunicipalities].forEach(g=>{
-    g.eachLayer(l => { if (l.setStyle && l.options && typeof l.options.style === 'function') {
-      l.setStyle(l.options.style());
-    }});
+    [groupCountries, groupDistricts, groupMunicipalities].forEach(g=>{
+    g.eachLayer(l => {
+      if (!l.setStyle) return;
+      const props = l.feature?.properties || {};
+      const lvl   = levelFromCategoryName(props.category_name);
+      const entId = props.entity_id;
+      const childKey =
+        (props.entity_category_id != null) ? props.entity_category_id : entId;
+
+      if (editor.selectedParent && entId === editor.selectedParent.id) {
+        // La mère
+        l.setStyle(styleParent());
+      } else if (childKey != null && selectedAddIds.has(childKey)) {
+        // Enfant à ajouter
+        l.setStyle(styleAdd());
+      } else if (childKey != null && selectedRemoveIds.has(childKey)) {
+        // Enfant à retirer
+        l.setStyle(styleRemove());
+      } else if (typeof l.options.style === 'function') {
+        l.setStyle(l.options.style());
+      } else {
+        applyDefaultStyle(l, lvl);
+      }
+    });
   });
+
   updateVisibility();
   scheduleRefresh();
 });
@@ -277,11 +489,6 @@ function show(){
     sideBar.classList.toggle('active');
     ChangeData(date, codesoc);
 }
-/*
-function montre(){
-    sideBar.classList.add('active');
-    ChangeData(date, codesoc);
-}*/
 function cache(){
     sideBar.classList.remove('active');
 }
@@ -307,6 +514,9 @@ function ChangeData(date, code){
             banniere = p[n]["Banniere"];
         }
     }
+
+    if (!banniere) hideBanner();
+    else showBanner(banniere);
 
     //feature.properties.name;
     document.getElementById('titre').innerText = nom;
@@ -505,4 +715,1079 @@ function Div(u){
     }
     var Tableau = [dm, m, c ,d, u];
     return Tableau;
+}
+
+
+
+////////////// MODE EDITEUR //////////////////////////////
+
+// Détecte les "commandes" de la searchbar (ici 'editeur')
+function handleSearchCommand(value) {
+  const cmd = value.trim().toLowerCase();
+  if (cmd === 'editeur' || cmd === 'éditeur') {
+    toggleEditorMode();
+    return true; // on a géré la commande, on ne lance pas la recherche classique
+  }
+  return false; // pas une commande spéciale
+}
+
+// État de l’éditeur (mémoire locale côté front)
+const editor = {
+  operation: '',            // type d'opération choisie dans l'éditeur
+  selectedParent: null,     // Dans le cas "change-parent", ceci représente l'ENFANT (l'entité à déplacer)
+  newParent: null,          // ★ NOUVEAU : La destination (pour change-parent)
+  pickingTarget: 'child',   // ★ NOUVEAU : 'child' ou 'newParent' (ce qu'on est en train de choisir sur la carte)
+  action: 'modify',         // ancien paramètre (transition, on le gardera un moment)
+  startDate: '',            // 'YYYY-MM-DD'
+  endDate: '',              // 'YYYY-MM-DD'
+  granularity: 'districts', // 'countries' | 'districts' | 'municipalities'
+  parentLocked: false,      // vrai = on ne change plus l’entité mère par clic
+  parentLevel: null,        // 'countries' | 'districts' | 'municipalities'
+  parentFrontiereId: null,   // id de la ligne "frontiere" sélectionnée (si dispo dans properties)
+  newGeometry: null      // 🔹 nouvelle géométrie de la mère après édition
+};
+
+
+
+
+// Bascule l’UI en mode éditeur (ou revient au mode normal)
+// script.js - Correction de toggleEditorMode
+
+function toggleEditorMode() {
+  editorMode = !editorMode;
+
+  if (editorMode) {
+    // --- ENTRÉE EN MODE ÉDITEUR ---
+    resetEditorState(); 
+    
+    // Sauvegarde l'état du panneau latéral
+    if (sideContent) previousSidebarHTML = sideContent.innerHTML;
+    if (sideTitle) sideTitle.innerText = 'Mode éditeur';
+    if (sideSub)   sideSub.innerText   = 'Préparation des outils…';
+
+    sideBar?.classList.add('editor');
+    hideBanner();
+
+    if (sideContent) {
+      sideContent.innerHTML = renderEditorPanel();
+      attachEditorPanelEvents();
+    }
+    if (sideBar) sideBar.classList.add('active'); 
+
+  } else {
+    // --- SORTIE DU MODE ÉDITEUR ---
+    
+    // 1. D'abord, on remet à zéro tout l'état logique
+    resetEditorState(); 
+
+    // 2. Restauration de l'interface
+    if (sideTitle) sideTitle.innerText = 'Détails';
+    if (sideSub)   sideSub.innerText   = '';
+    if (sideContent) sideContent.innerHTML = previousSidebarHTML || '';
+
+    if (sideBar) {
+      sideBar.classList.remove('active');
+      sideBar.classList.remove('editor');
+    }
+
+    // 3. IMPORTANT : On force le rechargement des calques pour nettoyer 
+    // les styles "bleu/vert/rouge" résiduels sur la carte.
+    MAJLayersMulti();
+  }
+}
+
+// Rend le petit panneau d’édition (maquette)
+function renderEditorPanel() {
+  const currentISO = date.toISOString().split('T')[0];
+  if (!editor.startDate) editor.startDate = currentISO;
+  if (!editor.endDate)   editor.endDate   = currentISO;
+
+  const parentLabel = editor.selectedParent
+    ? `${editor.selectedParent.name} (${editor.selectedParent.category ?? 'catégorie ?'})`
+    : 'Aucune (clique un polygone sur la carte)';
+
+  const hasParent   = !!editor.selectedParent;
+  const hasLocked   = hasParent && editor.parentLocked;
+  const s = editor.startDate ? new Date(editor.startDate) : null;
+  const e = editor.endDate   ? new Date(editor.endDate)   : null;
+  const datesOk     = !!(s && e && s <= e);
+
+  const op = editor.operation || '';
+
+  let bodyHTML = '';
+
+  if (!op) {
+    // Aucune opération choisie : on affiche seulement un message d'aide
+    bodyHTML = `
+      <div id="editor-body">
+        <div style="padding:8px; background:#fafafa; border:1px solid #eee; border-radius:6px;">
+          <strong>Étape 1 :</strong> choisis ce que tu veux faire dans la liste ci-dessus.<br>
+          Ensuite, l’éditeur affichera uniquement les options utiles.
+        </div>
+      </div>
+    `;
+  } else if (op === 'edit-borders' || op === 'edit-borders-dates') {
+  // Cas : modifier les frontières (avec ou sans modification de période)
+  const datesReadOnly = (op === 'edit-borders');
+  const dateHelpText = datesReadOnly
+    ? 'En mode "Modifier les frontières", ces dates viennent de la frontière sélectionnée et ne seront pas modifiées.'
+    : 'Ces dates correspondent à la période pendant laquelle ces frontières s’appliquent.';
+
+  bodyHTML = `
+      <div id="editor-body">
+
+        <!-- Barre d'état des étapes -->
+        <div style="border:1px solid #eee; border-radius:6px; padding:8px;">
+          <div><strong>Étapes :</strong></div>
+          <div>1️⃣ Entité mère : ${hasParent ? (hasLocked ? '✅ choisie & verrouillée' : '🟡 choisie, pense à la verrouiller') : '⚪ à choisir'}</div>
+          <div>2️⃣ Période : ${datesOk ? '✅ dates valides' : '🟡 à compléter / corriger'}</div>
+          <div>3️⃣ Sélection des enfants : 🟦 cliquer quand l’étape 1 est verrouillée</div>
+        </div>
+
+        <!-- Entité mère -->
+        <div class="field">
+          <label style="display:block; font-weight:600; margin-bottom:4px;">Entité mère</label>
+          <div id="editor-parent-view" style="padding:8px; background:#f6f6f6; border:1px solid #e5e5e5; border-radius:6px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <span>${parentLabel}</span>
+            <button id="editor-parent-lock" type="button">${editor.parentLocked ? 'Déverrouiller' : 'Verrouiller'}</button>
+          </div>
+          <small>
+            1) Clique un polygone pour choisir l’entité mère, puis <strong>verrouille</strong>.<br>
+            2) Tant que ce n’est pas verrouillé, tu peux recliquer pour changer de mère.
+          </small>
+          <div style="display:flex; gap:6px; margin-top:6px;">
+            <input id="editor-parent-input" type="text" placeholder="(optionnel) saisir/chercher un nom…" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:6px;">
+            <button id="editor-parent-clear" type="button">Effacer</button>
+          </div>
+        </div>
+
+        <!-- Période -->
+        <div class="field">
+          <label style="display:block; font-weight:600; margin-bottom:4px;">Période concernée</label>
+          <div style="display:flex; gap:8px;">
+            <div style="flex:1;">
+              <div style="font-size:12px; opacity:0.8;">Date de début</div>
+              <input id="editor-start" type="date" value="${editor.startDate}" ${datesReadOnly ? 'disabled' : ''} style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;">
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:12px; opacity:0.8;">Date de fin</div>
+              <input id="editor-end" type="date" value="${editor.endDate}" ${datesReadOnly ? 'disabled' : ''} style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;">
+            </div>
+          </div>
+          <small id="editor-date-help" style="color:#666;">
+            ${dateHelpText}
+          </small>
+        </div>
+
+        <!-- Granularité (N-1) -->
+        <div class="field">
+          <label style="display:block; font-weight:600; margin-bottom:4px;">Niveau des enfants à modifier</label>
+          <select id="editor-granularity" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;">
+            <option value="countries"      ${editor.granularity==='countries'?'selected':''}>Countries (ADM0)</option>
+            <option value="districts"      ${editor.granularity==='districts'?'selected':''}>Districts / Régions (ADM1)</option>
+            <option value="municipalities" ${editor.granularity==='municipalities'?'selected':''}>Municipalities / Communes (ADM2)</option>
+          </select>
+          <small>Ce niveau est déduit automatiquement du niveau de l’entité mère, mais tu peux encore l’ajuster ici pour l’instant.</small>
+        </div>
+
+        <!-- Sélection d'enfants -->
+        <div class="field" style="border:1px dashed #ddd; padding:8px; border-radius:6px;">
+          <label style="display:block; font-weight:600; margin-bottom:4px;">Sélection d’enfants</label>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button id="editor-select-toggle" type="button">${selectionActive ? 'Arrêter sélection' : 'Activer sélection'}</button>
+            <button id="editor-select-clear" type="button">Vider la sélection</button>
+            <span id="editor-select-count" style="opacity:0.85;">0 sélection(s)</span>
+          </div>
+          <small>
+            • <span style="color:#2e7d32;">Vert</span> = enfants <strong>ajoutés</strong> à l’entité sur cette période<br>
+            • <span style="color:#c62828;">Rouge</span> = enfants <strong>retirés</strong> de l’entité sur cette période
+          </small>
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="editor-apply"  type="button" style="flex:1;">Prévisualiser la modification</button>
+          <button id="editor-save"   type="button" style="flex:1;">Sauvegarder en base</button>
+          <button id="btn-editor-exit" type="button">Quitter</button>
+        </div>
+
+        <!-- Messages / résumé -->
+        <div id="editor-msg" style="padding:8px; background:#fafafa; border:1px solid #eee; border-radius:6px;">
+          <em>Complète les champs ci-dessus. Un résumé s’affichera ici.</em>
+        </div>
+
+      </div>
+    `;
+    }  else if (op === 'edit-dates') {
+    // Cas : ne modifier que les dates de la frontière (pas les enfants)
+    bodyHTML = `
+      <div id="editor-body">
+
+        <!-- Entité mère / frontière ciblée -->
+        <div class="field">
+          <label style="display:block; font-weight:600; margin-bottom:4px;">Frontière à dater</label>
+          <div id="editor-parent-view" style="padding:8px; background:#f6f6f6; border:1px solid #e5e5e5; border-radius:6px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <span>${parentLabel}</span>
+            <button id="editor-parent-lock" type="button">${editor.parentLocked ? 'Déverrouiller' : 'Verrouiller'}</button>
+          </div>
+          <small>
+            Clique sur une frontière sur la carte pour choisir l’entité et la période actuelle.<br>
+            Les dates ci-dessous seront pré-remplies avec la période de cette frontière.
+          </small>
+          <div style="display:flex; gap:6px; margin-top:6px;">
+            <input id="editor-parent-input" type="text" placeholder="(optionnel) saisir/chercher un nom…" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:6px;">
+            <button id="editor-parent-clear" type="button">Effacer</button>
+          </div>
+        </div>
+
+        <!-- Période -->
+        <div class="field">
+          <label style="display:block; font-weight:600; margin-bottom:4px;">Nouvelle période de cette frontière</label>
+          <div style="display:flex; gap:8px;">
+            <div style="flex:1;">
+              <div style="font-size:12px; opacity:0.8;">Date de début</div>
+              <input id="editor-start" type="date" value="${editor.startDate}" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;">
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:12px; opacity:0.8;">Date de fin</div>
+              <input id="editor-end" type="date" value="${editor.endDate}" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;">
+            </div>
+          </div>
+          <small id="editor-date-help" style="color:#666;">
+            Tu modifies ici uniquement les dates de validité de cette frontière, pas sa forme ni ses enfants.
+          </small>
+        </div>
+
+        <!-- (Plus tard : option "appliquer aux enfants") -->
+
+        <!-- Actions -->
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="editor-apply"  type="button" style="flex:1;">Prévisualiser le changement de dates</button>
+          <button id="editor-save"   type="button" style="flex:1;">Sauvegarder en base</button>
+          <button id="btn-editor-exit" type="button">Quitter</button>
+        </div>
+
+        <!-- Messages / résumé -->
+        <div id="editor-msg" style="padding:8px; background:#fafafa; border:1px solid #eee; border-radius:6px;">
+          <em>Complète les dates puis prévisualise. On branchera ensuite la sauvegarde sur la base.</em>
+        </div>
+
+      </div>
+    `;
+  } else if (op === 'change-parent') {
+    
+    // Construction du label Enfant avec le parent actuel
+    let childLabel = '⚪ (Clique sur la carte)';
+    if (editor.selectedParent) {
+       const currP = editor.selectedParent.currentParentName 
+         ? ` (Actuel: ${editor.selectedParent.currentParentName})` 
+         : '';
+       childLabel = `✅ ${editor.selectedParent.name}${currP}`;
+    }
+      
+    const newParentLabel = editor.newParent
+      ? `✅ ${editor.newParent.name}`
+      : '⚪ (Clique sur le bouton "Choisir" puis sur la carte)';
+
+    // Styles visuels
+    const styleChildBtn = (editor.pickingTarget === 'child') 
+      ? 'background:#e3f2fd; border-color:#2196f3; font-weight:bold; color:#0d47a1;' 
+      : 'background:#fff; color:#333;';
+      
+    const styleNewParentBtn = (editor.pickingTarget === 'newParent') 
+      ? 'background:#e8f5e9; border-color:#4caf50; font-weight:bold; color:#1b5e20;' 
+      : 'background:#fff; color:#333;';
+
+    bodyHTML = `
+      <div id="editor-body">
+        <!-- 1. Entité à déplacer -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="display:block; font-weight:600; margin-bottom:4px;">1. Entité à déplacer</label>
+          <button id="btn-pick-child" type="button" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:6px; cursor:pointer; text-align:left; ${styleChildBtn}">
+             ${childLabel}
+          </button>
+        </div>
+
+        <!-- 2. Nouveau Parent -->
+        <div class="field" style="margin-bottom:12px;">
+          <label style="display:block; font-weight:600; margin-bottom:4px;">2. Destination (Nouveau Parent)</label>
+          <button id="btn-pick-newparent" type="button" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:6px; cursor:pointer; text-align:left; ${styleNewParentBtn}">
+             ${newParentLabel}
+          </button>
+          <small style="color:#666; display:block; margin-top:4px;">Clique ci-dessus, puis clique sur la carte.</small>
+        </div>
+
+        <!-- 3. Date -->
+        <div class="field">
+          <label style="display:block; font-weight:600; margin-bottom:4px;">3. Date de référence</label>
+          <input id="editor-ref-date" type="date"
+                 value="${editor.startDate || currentISO}"
+                 style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;">
+        </div>
+
+        <!-- Zone de messages pour cette opération -->
+        <div id="editor-msg"
+             style="margin-top:12px; padding:8px; background:#fafafa;
+                    border:1px solid #eee; border-radius:6px; font-size:12px;">
+          <em>Sélectionne l’entité à déplacer, le nouveau parent et la date,
+          puis clique sur « Sauvegarder ».</em>
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex; gap:8px; margin-top:16px;">
+          <button id="editor-save" type="button"
+                  style="flex:1; background:#1976d2; color:white;
+                         padding:10px; border-radius:4px; border:none;
+                         cursor:pointer; font-weight:bold;">
+            Sauvegarder
+          </button>
+          <button id="btn-editor-exit" type="button"
+                  style="padding:10px; border-radius:4px; border:1px solid #ccc;
+                         background:#fff; cursor:pointer;">
+            Quitter
+          </button>
+        </div>
+      </div>
+  `;} else {
+    // Autres opérations pas encore implémentées dans le détail
+    bodyHTML = `
+      <div id="editor-body">
+        <div style="padding:8px; background:#fff3cd; border:1px solid #ffeeba; border-radius:6px; margin-bottom:8px;">
+          Cette opération n’est pas encore détaillée dans l’interface.<br>
+        </div>
+        <button id="btn-editor-exit" type="button">Quitter</button>
+      </div>
+    `;
+  }
+
+  return `
+    <div style="display:flex; flex-direction:column; gap:12px; font-size:14px;">
+
+      <!-- 0) Choix de l'opération -->
+      <div class="field">
+        <label style="display:block; font-weight:600; margin-bottom:4px;">Que veux-tu faire ?</label>
+        <select id="editor-operation" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;">
+          <option value="">— Choisir une opération —</option>
+          <option value="edit-borders"       ${op==='edit-borders'?'selected':''}>Modifier les frontières d’une entité</option>
+          <option value="edit-dates"         ${op==='edit-dates'?'selected':''}>Modifier la période (dates) d’une frontière</option>
+          <option value="edit-borders-dates" ${op==='edit-borders-dates'?'selected':''}>Modifier frontières et période</option>
+          <option value="create-entity"      ${op==='create-entity'?'selected':''}>Créer une nouvelle entité et définir sa zone</option>
+          <option value="duplicate-entity"   ${op==='duplicate-entity'?'selected':''}>Dupliquer une entité sur une autre période puis modifier ses frontières</option>
+          <option value="change-parent"      ${op==='change-parent'?'selected':''}>Changer le parent d’une entité sur une période</option>
+        </select>
+        <small>Choisis d’abord une opération, les options utiles apparaîtront ensuite.</small>
+      </div>
+
+      ${bodyHTML}
+
+    </div>
+  `;
+}
+
+
+
+// Connecte les boutons du panneau d’édition
+function attachEditorPanelEvents() {
+  // --- 0) Gestion du choix de l'opération ---
+    const opSelect = document.getElementById('editor-operation');
+    if (opSelect) {
+      // On positionne la valeur actuelle dans la liste (utile si on rerend)
+      opSelect.value = editor.operation || '';
+
+      opSelect.addEventListener('change', () => {
+        editor.operation = opSelect.value || '';
+
+        // Quand on change d'opération, on rerend tout le panneau éditeur
+        if (sideContent) {
+          sideContent.innerHTML = renderEditorPanel();
+          attachEditorPanelEvents(); // on rebranche tous les écouteurs
+        }
+      });
+    }
+
+  const btnExit    = document.getElementById('btn-editor-exit');
+  const parentInput= document.getElementById('editor-parent-input');
+  const parentClear= document.getElementById('editor-parent-clear');
+  const startInput = document.getElementById('editor-start');
+  const endInput   = document.getElementById('editor-end');
+  const granSel    = document.getElementById('editor-granularity');
+  const msgBox     = document.getElementById('editor-msg');
+  const lockBtn    = document.getElementById('editor-parent-lock');
+  const parentView = document.getElementById('editor-parent-view');
+  const btnPickChild = document.getElementById('btn-pick-child');
+  const btnPickNewParent = document.getElementById('btn-pick-newparent');
+
+  if (btnExit) btnExit.addEventListener('click', () => toggleEditorMode());
+
+  // Verrouiller / déverrouiller la mère
+  if (lockBtn) {
+    lockBtn.addEventListener('click', () => {
+      if (!editor.selectedParent) return;
+      editor.parentLocked = !editor.parentLocked;
+      lockBtn.textContent = editor.parentLocked ? 'Déverrouiller' : 'Verrouiller';
+      renderSummary(msgBox);
+    });
+  }
+
+  // Saisie manuelle de l’entité mère
+  if (parentInput) {
+    parentInput.addEventListener('input', () => {
+      const name = (parentInput.value || '').trim();
+      if (name.length > 0) {
+        editor.selectedParent   = { id: null, name, category: null };
+        editor.parentLevel      = null;
+        editor.parentLocked     = false;
+        editor.parentFrontiereId = null;   // <-- on ne sait pas quelle frontière exacte
+        parentGeom              = null;
+        if (parentLayer) {
+          // on enlève le style spécial de l’ancienne mère
+          const lvl = levelFromCategoryName(parentLayer.feature?.properties?.category_name);
+          applyDefaultStyle(parentLayer, lvl);
+          parentLayer = null;
+        }
+        if (parentView) {
+          const span = parentView.querySelector('span');
+          const btn  = parentView.querySelector('#editor-parent-lock');
+          if (span) span.textContent = `${name} (saisi manuellement)`;
+          if (btn)  btn.textContent  = 'Verrouiller';
+        }
+      } else {
+        if (!editor.selectedParent && parentView) {
+          const span = parentView.querySelector('span');
+          const btn  = parentView.querySelector('#editor-parent-lock');
+          if (span) span.textContent = 'Aucune (clique un polygone sur la carte)';
+          if (btn)  btn.textContent  = 'Verrouiller';
+          editor.parentLocked = false;
+          editor.parentLevel  = null;
+          parentGeom          = null;
+          parentLayer         = null;
+        }
+      }
+      renderSummary(msgBox);
+    });
+  }
+
+  // Effacer la mère
+  if (parentClear) {
+    parentClear.addEventListener('click', () => {
+      if (parentInput) parentInput.value = '';
+      editor.selectedParent    = null;
+      editor.parentLevel       = null;
+      editor.parentLocked      = false;
+      editor.parentFrontiereId = null;   // <-- reset ici aussi
+      parentGeom               = null;
+      if (parentLayer) {
+        const lvl = levelFromCategoryName(parentLayer.feature?.properties?.category_name);
+        applyDefaultStyle(parentLayer, lvl);
+        parentLayer = null;
+      }
+      if (parentView) {
+        const span = parentView.querySelector('span');
+        const btn  = parentView.querySelector('#editor-parent-lock');
+        if (span) span.textContent = 'Aucune (clique un polygone sur la carte)';
+        if (btn)  btn.textContent  = 'Verrouiller';
+      }
+      renderSummary(msgBox);
+    });
+  }
+
+  // Action
+  document.querySelectorAll('input[name="editor-action"]').forEach(r => {
+    r.addEventListener('change', (e) => {
+      editor.action = e.target.value;
+      renderSummary(msgBox);
+    });
+  });
+
+  // Dates
+  if (startInput) {
+    startInput.addEventListener('change', () => {
+      editor.startDate = startInput.value;
+      renderSummary(msgBox);
+    });
+  }
+  if (endInput) {
+    endInput.addEventListener('change', () => {
+      editor.endDate = endInput.value;
+      renderSummary(msgBox);
+    });
+  }
+
+  // Granularité
+  if (granSel) {
+    granSel.addEventListener('change', () => {
+      editor.granularity = granSel.value;
+      renderSummary(msgBox);
+    });
+  }
+
+  if (btnPickChild) {
+    btnPickChild.addEventListener('click', () => {
+      editor.pickingTarget = 'child';
+      // On rafraîchit le panel pour mettre à jour les styles des boutons
+      if (sideContent) {
+        sideContent.innerHTML = renderEditorPanel();
+        attachEditorPanelEvents();
+      }
+    });
+  }
+
+  if (btnPickNewParent) {
+    btnPickNewParent.addEventListener('click', () => {
+      editor.pickingTarget = 'newParent';
+      if (sideContent) {
+        sideContent.innerHTML = renderEditorPanel();
+        attachEditorPanelEvents();
+      }
+    });
+  }
+
+  // Bouton "Prévisualiser..."
+  const btnApply = document.getElementById('editor-apply');
+  if (btnApply) {
+    btnApply.addEventListener('click', () => {
+      handleEditorApply(msgBox);
+    });
+  }
+
+
+
+  // --- Bouton SAUVEGARDER EN BASE ---
+    const btnSave = document.getElementById('editor-save');
+  if (btnSave) {
+    btnSave.addEventListener('click', async () => {
+      if (!msgBox) return;
+
+      const btnApply = document.getElementById('editor-apply');
+      const btnExit  = document.getElementById('btn-editor-exit');
+
+      // 0) Verrouiller l’UI pendant la sauvegarde
+      const oldSaveText = btnSave.textContent;
+      btnSave.disabled = true;
+      if (btnApply) btnApply.disabled = true;
+      if (btnExit)  btnExit.disabled  = true;
+      btnSave.textContent = 'Sauvegarde en cours…';
+      msgBox.innerHTML = `
+        <div style="color:#333; margin-bottom:6px;"><strong>Enregistrement en base…</strong></div>
+        <div style="font-size:12px;">Merci de patienter, la base recalcule la frontière du parent.</div>
+      `;
+
+      try {
+        // 1) Construire le payload
+        const result = buildEditorPayload({ requireGeometry: false });
+        if (!result || !result.ok) {
+          const problems = (result && result.problems) || ['Données incomplètes pour la sauvegarde.'];
+          msgBox.innerHTML = `
+            <div style="color:#b00020; margin-bottom:6px;"><strong>Impossible de sauvegarder :</strong></div>
+            <ul style="margin-top:0; padding-left:18px; color:#b00020;">
+              ${problems.map(p => `<li>${p}</li>`).join('')}
+            </ul>
+          `;
+          return;
+        }
+
+        const payload = result.payload;
+
+        const opsSupportees = ['edit-dates', 'edit-borders', 'edit-borders-dates', 'change-parent'];
+        if (!payload.operation || !opsSupportees.includes(payload.operation)) {
+          msgBox.innerHTML = `
+            <div style="color:#b00020; margin-bottom:6px;"><strong>Opération non encore supportée pour la sauvegarde.</strong></div>
+            <div>Pour l’instant, seules les opérations 
+              <strong>"Modifier la période (dates) d’une frontière"</strong>, 
+              <strong>"Modifier les frontières d’une entité"</strong> et 
+              <strong>"Modifier frontières et période"</strong> sont appliquées en base.</div>
+          `;
+          return;
+        }
+
+        // 3) Appel API
+        const resp = await fetch('/api/editor/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+
+        msgBox.innerHTML = `
+          <div style="color:#1b5e20; margin-bottom:6px;"><strong>Sauvegarde effectuée ✔</strong></div>
+          <pre style="white-space:pre-wrap; font-size:12px;">${JSON.stringify(data, null, 2)}</pre>
+        `;
+
+        // ➜ Rechargement des couches pour refléter la base
+        if (typeof MAJLayersMulti === 'function') {
+          MAJLayersMulti();
+        }
+      } catch (err) {
+        console.error(err);
+        msgBox.innerHTML = `
+          <div style="color:#b00020; margin-bottom:6px;"><strong>Erreur lors de la sauvegarde :</strong></div>
+          <div>${err.message}</div>
+        `;
+      } finally {
+        // 4) Déverrouiller l’UI
+        btnSave.disabled = false;
+        if (btnApply) btnApply.disabled = false;
+        if (btnExit)  btnExit.disabled  = false;
+        btnSave.textContent = oldSaveText;
+      }
+    });
+  }
+
+
+
+
+  // Sélection d’enfants
+  const btnSelToggle = document.getElementById('editor-select-toggle');
+  const btnSelClear  = document.getElementById('editor-select-clear');
+  const selCount     = document.getElementById('editor-select-count');
+
+  function refreshSelectionCounter() {
+    const total = selectedAddIds.size + selectedRemoveIds.size;
+    if (selCount) selCount.textContent = `${total} sélection(s)`;
+  }
+  refreshSelectionCounter();
+
+  if (btnSelToggle) {
+    btnSelToggle.addEventListener('click', () => {
+      // Forcer le flux logique : mère choisie ET verrouillée
+      if (!editor.selectedParent) {
+        if (msgBox) msgBox.innerHTML = `<div style="color:#b00020;"><strong>Choisis d’abord une entité mère.</strong></div>`;
+        return;
+      }
+      if (!editor.parentLocked) {
+        if (msgBox) msgBox.innerHTML = `<div style="color:#b00020;"><strong>Verrouille l’entité mère avant de sélectionner les enfants.</strong></div>`;
+        return;
+      }
+      selectionActive = !selectionActive;
+      btnSelToggle.textContent = selectionActive ? 'Arrêter sélection' : 'Activer sélection';
+    });
+  }
+
+  if (btnSelClear) {
+    btnSelClear.addEventListener('click', () => {
+      for (const [id, lyr] of selectedLayers.entries()) {
+        try {
+          const lvl = levelFromCategoryName(lyr.feature?.properties?.category_name);
+          applyDefaultStyle(lyr, lvl);
+        } catch {}
+      }
+      selectedLayers.clear();
+      selectedAddIds.clear();
+      selectedRemoveIds.clear();
+      refreshSelectionCounter();
+    });
+  }
+
+  window.__editorRefreshSelectionCounter = refreshSelectionCounter;
+  renderSummary(msgBox);
+}
+
+
+function renderSummary(msgBox, force=false) {
+  if (!msgBox) return;
+
+  const p = editor.selectedParent;
+  const parentTxt = p ? `${p.name} ${p.id ? `(id ${p.id})` : ''}` : '— (non défini)';
+
+  const s = editor.startDate ? new Date(editor.startDate) : null;
+  const e = editor.endDate   ? new Date(editor.endDate)   : null;
+  let problems = [];
+
+  // Validation différente selon l'opération choisie
+  if (editor.operation === 'edit-borders-dates' ||
+      editor.operation === 'edit-dates') {
+
+    if (!editor.startDate) problems.push('Date de début manquante.');
+    if (!editor.endDate)   problems.push('Date de fin manquante.');
+    if (s && e && s > e)   problems.push('La date de début doit être ≤ la date de fin.');
+    if (!p)                problems.push('Aucune entité mère / frontière sélectionnée (clique un polygone ou saisis un nom).');
+
+  } else if (editor.operation === 'edit-borders') {
+
+    // En "modifier les frontières", les dates sont simplement informatives
+    if (!p) problems.push('Aucune entité mère / frontière sélectionnée (clique un polygone ou saisis un nom).');
+    if (s && e && s > e)   problems.push('La date de début doit être ≤ la date de fin.');
+
+  } else {
+    // Cas générique / autres opérations (pour l’instant)
+    if (!p && editor.operation) {
+      problems.push('Aucune entité sélectionnée pour cette opération.');
+    }
+  }
+
+
+  let actionTxt;
+  switch (editor.operation) {
+    case 'edit-borders':
+      actionTxt = 'Modifier les frontières de cette entité sur la période choisie';
+      break;
+    case 'edit-dates':
+      actionTxt = 'Modifier uniquement la période (dates) de cette frontière';
+      break;
+    case 'edit-borders-dates':
+      actionTxt = 'Modifier à la fois les frontières et la période de cette entité';
+      break;
+    case 'create-entity':
+      actionTxt = 'Créer une nouvelle entité et définir sa zone';
+      break;
+    case 'duplicate-entity':
+      actionTxt = 'Dupliquer une entité sur une autre période puis modifier ses frontières';
+      break;
+    case 'change-parent':
+      actionTxt = 'Changer le parent de cette entité sur une période donnée';
+      break;
+    default:
+      // Ancienne logique de repli si aucune opération n’est encore choisie
+      actionTxt = (editor.action === 'modify')
+        ? 'Mettre à jour les frontières pour la période actuelle'
+        : 'Créer une nouvelle période de frontières';
+  }
+
+  const granTxt = ({
+    countries:      'Countries (ADM0)',
+    districts:      'Districts / Régions (ADM1)',
+    municipalities: 'Municipalities / Communes (ADM2)'
+  })[editor.granularity] || editor.granularity || '—';
+
+  const opLabel = editor.operation || '— (aucune opération choisie)';
+
+  if (problems.length > 0) {
+    msgBox.innerHTML = `
+      <div style="color:#b00020; margin-bottom:6px;"><strong>À corriger :</strong></div>
+      <ul style="margin-top:0; padding-left:18px; color:#b00020;">
+        ${problems.map(p => `<li>${p}</li>`).join('')}
+      </ul>
+      <div style="margin-top:6px; opacity:0.85;">
+        <strong>Résumé (brouillon) :</strong><br>
+        Opération : ${opLabel}<br>
+        Entité / frontière : ${parentTxt}<br>
+        Période : ${editor.startDate || '—'} → ${editor.endDate || '—'}<br>
+        Granularité (si applicable) : ${granTxt}
+      </div>
+    `;
+    return;
+  }
+
+  // Tout est cohérent → petit résumé "vert"
+  msgBox.innerHTML = `
+    <div style="color:#1b5e20; margin-bottom:6px;"><strong>Paramètres prêts ✔</strong></div>
+    <div><strong>Opération :</strong> ${opLabel}</div>
+    <div><strong>Action :</strong> ${actionTxt}</div>
+    <div><strong>Entité / frontière :</strong> ${parentTxt}</div>
+    <div><strong>Période :</strong> ${editor.startDate || '—'} → ${editor.endDate || '—'}</div>
+    <div><strong>Granularité (si applicable) :</strong> ${granTxt}</div>
+    <div style="margin-top:6px; opacity:0.85;">
+      Étape suivante : le bouton "Prévisualiser" utilisera ces informations pour construire la modification logique
+      (puis on branchera la sauvegarde sur la base).
+    </div>
+  `;
+}
+
+
+
+// Détermine le "niveau" (countries/districts/municipalities) d'une feature à partir de category_name
+function levelFromCategoryName(categoryName) {
+  const s = String(categoryName || '').toLowerCase();
+  if (/adm0|country|countries|pays/.test(s)) return 'countries';
+  if (/adm1|district|region|state/.test(s))  return 'districts';
+  if (/adm2|municipal|commune|county/.test(s)) return 'municipalities';
+  return null;
+}
+
+// Style de sélection (surbrillance)
+function styleSelected() {
+  return { color: '#2e7d32', weight: 2, fillOpacity: 0.25 };
+}
+
+// Restaure le style par défaut selon le niveau + zoom
+function applyDefaultStyle(layer, level) {
+  const z = map.getZoom();
+  if (level === 'countries')      layer.setStyle(styleCountries(z));
+  else if (level === 'districts') layer.setStyle(styleDistricts(z));
+  else if (level === 'municipalities') layer.setStyle(styleMunicipalities(z));
+}
+
+// Style de la mère (frontière principale)
+function styleParent() {
+  return { color: '#1976d2', weight: 3, fillOpacity: 0.08 };
+}
+
+// Style d'ajout (en dehors de la mère)
+function styleAdd() {
+  return { color: '#2e7d32', weight: 2, fillOpacity: 0.25 };
+}
+
+// Style de retrait (à l'intérieur de la mère)
+function styleRemove() {
+  return { color: '#c62828', weight: 2, fillOpacity: 0.25 };
+}
+
+function classifyChildSelection(feature) {
+  // Si pas de mère ou pas de géométrie, on considère que c’est un ajout
+  if (!parentGeom || typeof turf === 'undefined') return 'add';
+  try {
+    const childGeom = feature.geometry;
+    const center = turf.centroid(childGeom);
+    const inside = turf.booleanPointInPolygon(center, parentGeom);
+    return inside ? 'remove' : 'add';
+  } catch {
+    return 'add';
+  }
+}
+
+// Petit helper pour afficher du JSON proprement dans un <pre>
+function escapeHTML(str) {
+  return String(str).replace(/[&<>'"]/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;'
+  }[c]));
+}
+
+// Construit le "plan de modification" à partir de l'état de l'éditeur
+function buildEditorPayload(options = {}) {
+  const { requireGeometry = false } = options; 
+
+  const op      = editor.operation;
+  const parent  = editor.selectedParent; // Pour change-parent, c'est l'enfant
+  const s       = editor.startDate ? new Date(editor.startDate) : null;
+  const e       = editor.endDate   ? new Date(editor.endDate)   : null;
+  const problems = [];
+
+  if (!op) {
+    problems.push('Choisis d’abord une opération dans la liste "Que veux-tu faire ?".');
+    return { ok: false, problems };
+  }
+
+  // ============================================================
+  // 1. CHANGE-PARENT (PLACÉ EN PREMIER POUR ÉVITER LE BUG)
+  // ============================================================
+  if (op === 'change-parent') {
+    const refDate = document.getElementById('editor-ref-date')?.value;
+    
+    // Validation
+    if (!parent) problems.push('1. Sélectionne l’entité à déplacer (Enfant) sur la carte.');
+    if (!editor.newParent) problems.push('2. Sélectionne le Nouveau Parent (Destination) sur la carte.');
+    if (!refDate) problems.push('3. Date de référence manquante.');
+    
+    // Vérification logique
+    if (parent && editor.newParent && parent.id === editor.newParent.id) {
+        problems.push('L’enfant et le nouveau parent ne peuvent pas être la même entité !');
+    }
+
+    if (problems.length > 0) return { ok: false, problems };
+
+    const payload = {
+      operation: op,
+      child: {
+        entityCategoryId: parent.entityCategoryId || parent.id,
+        frontiereId:      editor.parentFrontiereId,
+        name:             parent.name
+      },
+      newParent: {
+        name: editor.newParent.name 
+      },
+      dateReference: refDate,
+      // On envoie la date actuelle de la carte pour que le serveur sache quel lien supprimer
+      currentMapDate: date.toISOString().split('T')[0] 
+    };
+
+    return { ok: true, payload };
+  }
+
+  // --- 2. EDIT-BORDERS & EDIT-BORDERS-DATES ---
+  if (op === 'edit-borders' || op === 'edit-borders-dates') {
+    if (!parent) problems.push('Aucune entité mère sélectionnée.');
+    if (requireGeometry && !editor.newGeometry) {
+      problems.push('Tu dois d’abord cliquer sur "Prévisualiser" pour calculer la nouvelle frontière.');
+    }
+    if (op === 'edit-borders-dates') {
+      if (!editor.startDate) problems.push('Date de début manquante.');
+      if (!editor.endDate)   problems.push('Date de fin manquante.');
+    }
+    if (s && e && s > e) problems.push('La date de début doit être ≤ la date de fin.');
+
+    if (problems.length > 0) return { ok: false, problems };
+
+    const payload = {
+      operation: op,
+      parent: {
+        id:               parent.id,
+        entityCategoryId: parent.entityCategoryId || null,
+        name:             parent.name,
+        category:         parent.category,
+        level:            editor.parentLevel,
+        frontiereId:      editor.parentFrontiereId
+      },
+      period: { start: editor.startDate || null, end: editor.endDate || null },
+      granularity: editor.granularity,
+      selections: { add: Array.from(selectedAddIds), remove: Array.from(selectedRemoveIds) }
+    };
+    return { ok: true, payload };
+  }
+
+  // --- 3. EDIT-DATES ---
+  if (op === 'edit-dates') {
+    if (!parent) problems.push('Aucune entité / frontière sélectionnée.');
+    if (!editor.startDate) problems.push('Date de début manquante.');
+    if (!editor.endDate)   problems.push('Date de fin manquante.');
+
+    if (problems.length > 0) return { ok: false, problems };
+
+    const payload = {
+      operation: op,
+      parent: {
+        id:         parent.id,
+        name:       parent.name,
+        category:   parent.category,
+        level:      editor.parentLevel,
+        frontiereId: editor.parentFrontiereId
+      },
+      period: { start: editor.startDate, end: editor.endDate }
+    };
+    return { ok: true, payload };
+  }
+
+  // --- 4. CATCH-ALL (SI AUCUNE OPÉRATION CI-DESSUS N'A MATCHÉ) ---
+  problems.push('Cette opération n’est pas encore supportée par la prévisualisation.');
+  return { ok: false, problems };
+}
+
+// Gère le clic sur "Prévisualiser..."
+function handleEditorApply(msgBox) {
+  const result = buildEditorPayload({ requireGeometry: false });
+  if (!result) return;
+
+  if (!result.ok) {
+    const problems = result.problems || [];
+    msgBox.innerHTML = `
+      <div style="color:#b00020; margin-bottom:6px;"><strong>Impossible de prévisualiser :</strong></div>
+      <ul style="margin-top:0; padding-left:18px; color:#b00020;">
+        ${problems.map(p => `<li>${p}</li>`).join('')}
+      </ul>
+    `;
+    return;
+  }
+
+    const payload = result.payload;
+
+  // Affichage dans la sidebar
+  msgBox.innerHTML = `
+    <div style="color:#1b5e20; margin-bottom:6px;"><strong>Aperçu logique prêt ✔</strong></div>
+    <div style="margin-bottom:6px;">
+      Voici le "plan" de modification qui pourrait être envoyé au serveur :
+    </div>
+    <pre style="white-space:pre-wrap; max-height:220px; overflow:auto; background:#f5f5f5; padding:8px; border-radius:4px;">
+${escapeHTML(JSON.stringify(payload, null, 2))}
+    </pre>
+    <small>
+      Tu vois à la fois le plan logique ci-dessus et, sur la carte,
+      la nouvelle frontière de l’entité mère en orange.
+    </small>
+  `;
+
+  console.log('EDITOR PAYLOAD', payload);
+
+  // ➜ Prévisualisation géométrique pour les opérations sur les frontières
+  if (payload.operation === 'edit-borders' || payload.operation === 'edit-borders-dates') {
+    previewParentGeometryBorders();
+  } else {
+    // Pour les autres opérations, on nettoie juste le draft
+    if (draftGroup) draftGroup.clearLayers();
+  }
+}
+
+
+// Transforme une géométrie brute en Feature GeoJSON
+function geomToFeature(geom) {
+  return {
+    type: 'Feature',
+    properties: {},
+    geometry: geom
+  };
+}
+
+// Prévisualisation de la nouvelle frontière de la mère
+function previewParentGeometryBorders() {
+  if (!draftGroup || !parentGeom || typeof turf === 'undefined') {
+    console.warn('Prévisualisation impossible (draftGroup/parentGeom/turf manquant).');
+    return;
+  }
+
+  // On nettoie les anciens drafts
+  draftGroup.clearLayers();
+
+  // 1) Point de départ : géométrie actuelle de la mère
+  let resultFeature = geomToFeature(parentGeom);
+
+  // 2) Ajouts : union avec les enfants "verts"
+  for (const id of selectedAddIds) {
+    const layer = selectedLayers.get(id);
+    if (!layer || !layer.feature || !layer.feature.geometry) continue;
+
+    try {
+      const childFeat = geomToFeature(layer.feature.geometry);
+      const unioned = turf.union(resultFeature, childFeat);
+      if (unioned) resultFeature = unioned;
+    } catch (e) {
+      console.error('Erreur union enfant', e);
+    }
+  }
+
+  // 3) Retraits : différence avec les enfants "rouges"
+  for (const id of selectedRemoveIds) {
+    const layer = selectedLayers.get(id);
+    if (!layer || !layer.feature || !layer.feature.geometry) continue;
+
+    try {
+      const childFeat = geomToFeature(layer.feature.geometry);
+      const diff = turf.difference(resultFeature, childFeat);
+      if (diff) resultFeature = diff; // si diff=null on garde l’ancien
+    } catch (e) {
+      console.error('Erreur difference enfant', e);
+    }
+  }
+
+  // 4) Affichage de la nouvelle frontière en orange
+  draftGroup.clearLayers();
+
+  L.geoJSON(resultFeature, {
+    style: {
+      color: '#ff9800',
+      weight: 2,
+      fillOpacity: 0.15
+    },
+    interactive: false   // la preview ne doit pas capter les clics
+  }).addTo(draftGroup);
+
+  // 5) Stocker la géométrie pour la sauvegarde
+  editor.newGeometry =
+    resultFeature && resultFeature.geometry ? resultFeature.geometry : null;
+}
+
+function resetEditorState() {
+  editor.operation        = '';
+  editor.selectedParent   = null;
+  editor.newParent        = null;    // ★ Reset
+  editor.pickingTarget    = 'child'; // ★ Reset
+  editor.action           = 'modify';
+  editor.startDate        = date.toISOString().split('T')[0];
+  editor.endDate          = date.toISOString().split('T')[0];
+  editor.granularity      = 'districts';
+  editor.parentLocked     = false;
+  editor.parentLevel      = null;
+  editor.parentFrontiereId = null;
+  editor.newGeometry      = null;
+
+  selectionActive = false;
+  selectedAddIds.clear();
+  selectedRemoveIds.clear();
+  selectedLayers.clear();
+  parentLayer = null;
+  parentGeom  = null;
+
+  if (draftGroup) draftGroup.clearLayers();
 }
