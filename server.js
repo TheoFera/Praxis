@@ -40,6 +40,49 @@ function isValidISODate(str) {
   return !isNaN(d.getTime());
 }
 
+// Constantes par défaut pour éviter les valeurs magiques dans le code
+const DEFAULT_BBOX = [-180, -90, 180, 90];
+const DEFAULT_TYPES = ['countries'];
+
+// Calcule la date du jour au format YYYY-MM-DD (utilisée comme valeur de repli)
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+// Convertit "countries,districts" -> ['countries','districts'] en éliminant le bruit
+function parseTypeList(rawTypes = '') {
+  return (rawTypes || DEFAULT_TYPES.join(','))
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+// Convertit "w,s,e,n" -> [w,s,e,n] ou renvoie la bbox par défaut si invalide
+function parseBBox(raw) {
+  if (!raw) return DEFAULT_BBOX;
+  const parts = raw.split(',').map(Number);
+  if (parts.length === 4 && parts.every((v) => !Number.isNaN(v))) return parts;
+  return DEFAULT_BBOX;
+}
+
+// Normalise une liste d'identifiants (supprime le bruit et garde uniquement les entiers)
+function normalizeIdList(values) {
+  return (Array.isArray(values) ? values : [])
+    .map(Number)
+    .filter(Number.isInteger);
+}
+
+// Vêrifie que start <= end et que les dates sont au format ISO
+function validateDateRange(startStr, endStr) {
+  const errors = [];
+  if (!startStr || !isValidISODate(startStr)) errors.push('Date de début invalide ou manquante.');
+  if (!endStr || !isValidISODate(endStr)) errors.push('Date de fin invalide ou manquante.');
+  if (startStr && endStr && isValidISODate(startStr) && isValidISODate(endStr)) {
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+    if (start.getTime() > end.getTime()) errors.push('La date de début doit être <= la date de fin.');
+  }
+  return errors;
+}
+
 /************************************************************
  * GET /api/frontieres
  * Query :
@@ -60,19 +103,16 @@ function isValidISODate(str) {
  * GET /api/frontieres
  ************************************************************/
 app.get('/api/frontieres', async (req, res) => {
+  // Connexion manuelle pour pouvoir libérer proprement le client en fin de requéte
   const client = await pool.connect();
   try {
-    const dateStr = isValidISODate(req.query.date) ? req.query.date : new Date().toISOString().slice(0, 10);
-    const types = (req.query.types || 'countries').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-    const z = Number(req.query.zoom) || 5;
+    // Paramétres d'entrée avec valeurs de repli
+    const dateStr = isValidISODate(req.query.date) ? req.query.date : todayISO(); // date cible
+    const types   = parseTypeList(req.query.types);                               // categories demandées
+    const z       = Number(req.query.zoom) || 5;                                  // niveau de zoom courant
+    const bbox    = parseBBox(req.query.bbox);                                    // fenétre visible
 
-    let bbox;
-    if (req.query.bbox) {
-      const parts = req.query.bbox.split(',').map(Number);
-      if (parts.length === 4 && parts.every(v => !isNaN(v))) bbox = parts;
-    }
-    if (!bbox) bbox = [-180, -90, 180, 90];
-
+    // Requéte SQL : on fait tout le formatage GeoJSON côté PostgreSQL pour limiter le post-traitement
     // MODIFICATION : On joint pour trouver le nom du parent (e_p.name)
     const sql = `
       WITH src AS (
@@ -139,12 +179,14 @@ app.get('/api/frontieres', async (req, res) => {
     `;
 
     const { rows } = await client.query(sql, [
-      dateStr,
-      types,
-      bbox[0], bbox[1], bbox[2], bbox[3],
-      z
+      dateStr,             // $1 : date de référence
+      types,               // $2 : liste de catégories
+      bbox[0], bbox[1],    // $3 / $4 : bornes Ouest / Sud
+      bbox[2], bbox[3],    // $5 / $6 : bornes Est / Nord
+      z                    // $7 : niveau de zoom (choix du niveau de simplification)
     ]);
 
+    // Récupération sécurisée du résultat (GeoJSON produit par le SQL)
     const fc = rows[0]?.fc || { type: 'FeatureCollection', features: [] };
     res.json(fc);
   } catch (err) {
@@ -294,6 +336,19 @@ async function insertFrontiereFromGeometry(client, geomObj, startStr, endStr) {
   return rows[0];
 }
 
+// Duplique une frontière en conservant sa géométrie et en assignant de nouvelles dates.
+async function duplicateFrontiereWithDates(client, sourceFrontId, startStr, endStr) {
+  const sql = `
+    INSERT INTO frontiere(geom, geom_z0, geom_z1, geom_z2, geojson, date_debut, date_fin)
+    SELECT geom, geom_z0, geom_z1, geom_z2, geojson, $2::date, $3::date
+    FROM frontiere
+    WHERE id = $1
+    RETURNING id, date_debut, date_fin;
+  `;
+  const { rows } = await client.query(sql, [sourceFrontId, startStr, endStr]);
+  return rows[0];
+}
+
 /************************************************************
  * POST /api/editor/apply
  * Corps JSON (simplifié) :
@@ -314,7 +369,7 @@ async function insertFrontiereFromGeometry(client, geomObj, startStr, endStr) {
 
 app.post('/api/editor/apply', async (req, res) => {
   const body = req.body || {};
-  const op   = body.operation;
+  const op   = body.operation; // type d'opération demandée (edit-dates, edit-borders, ...)
 
   if (!op) {
     return res.status(400).json({
@@ -334,33 +389,17 @@ app.post('/api/editor/apply', async (req, res) => {
     const startStr = period.start;
     const endStr   = period.end;
 
-    const problems = [];
+    const problems = validateDateRange(startStr, endStr);
+    if (!frontId) problems.unshift('frontiereId manquant dans le payload.');
 
-    if (!frontId) {
-      problems.push('frontiereId manquant dans le payload.');
-    }
-    if (!startStr || !isValidISODate(startStr)) {
-      problems.push('Date de début invalide ou manquante.');
-    }
-    if (!endStr || !isValidISODate(endStr)) {
-      problems.push('Date de fin invalide ou manquante.');
-    }
-
-    if (startStr && endStr && isValidISODate(startStr) && isValidISODate(endStr)) {
-      const d1 = new Date(startStr);
-      const d2 = new Date(endStr);
-      if (d1.getTime() > d2.getTime()) {
-        problems.push('La date de début doit être ≤ la date de fin.');
-      }
-    }
-
+    // Validation avant d'ouvrir une transaction
     if (problems.length > 0) {
       return res.status(400).json({ ok: false, error: problems.join(' ') });
     }
 
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query('BEGIN'); // transaction pour garantir la coherence
 
       const updateSQL = `
         UPDATE frontiere
@@ -413,17 +452,10 @@ app.post('/api/editor/apply', async (req, res) => {
     const frontId    = parent.frontiereId;
     const ecParentId = parent.entityCategoryId;
 
-    const rawAdd    = Array.isArray(selections.add)    ? selections.add    : [];
-    const rawRemove = Array.isArray(selections.remove) ? selections.remove : [];
+    const addList    = normalizeIdList(selections.add);    // enfants à ajouter
+    const removeList = normalizeIdList(selections.remove); // enfants à retirer
 
-    const addList = rawAdd
-      .map(Number)
-      .filter(n => Number.isInteger(n));
-    const removeList = rawRemove
-      .map(Number)
-      .filter(n => Number.isInteger(n));
-
-    // Période (optionnelle) à utiliser comme filtre dans recomputeParentGeometry
+    // Periode (optionnelle) a utiliser comme filtre dans recomputeParentGeometry
     let startStr = period.start || null;
     let endStr   = period.end   || null;
     if (startStr && !isValidISODate(startStr)) startStr = null;
@@ -446,7 +478,7 @@ app.post('/api/editor/apply', async (req, res) => {
 
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query('BEGIN'); // debut de transaction
 
       // 1) Vérifier que la frontière existe
       const checkFront = await client.query(
@@ -553,35 +585,26 @@ app.post('/api/editor/apply', async (req, res) => {
     const selections = body.selections || {};
     const newEntity  = body.newEntity || {};
 
-    const parentFrontiereId = parent.frontiereId;
-    const parentEcId        = parent.entityCategoryId;
+    const parentFrontiereId = Number(parent.frontiereId) || null;
+    const parentEcId        = Number(parent.entityCategoryId) || null;
 
     const startStr = period.start;
     const endStr   = period.end;
 
-    const rawAdd    = Array.isArray(selections.add)    ? selections.add    : [];
-    const rawRemove = Array.isArray(selections.remove) ? selections.remove : [];
-    const addList    = rawAdd.map(Number).filter(Number.isInteger);
-    const removeList = rawRemove.map(Number).filter(Number.isInteger);
+    const addList    = normalizeIdList(selections.add);
+    const removeList = normalizeIdList(selections.remove);
 
     const name     = (newEntity.name || '').trim();
     const category = (newEntity.category || '').trim().toLowerCase();
     const geometry = body.geometry || body.newGeometry || null;
 
-    const problems = [];
-    if (!name) problems.push('Nom de la nouvelle entité manquant.');
-    if (!category) problems.push('Catégorie de la nouvelle entité manquante.');
+    const problems = validateDateRange(startStr, endStr);
+    if (!name) problems.unshift('Nom de la nouvelle entite manquant.');
+    if (!category) problems.unshift('Categorie de la nouvelle entite manquante.');
     if (!parentEcId || !parentFrontiereId) {
-      problems.push('Entité parente mal définie (frontière ou category id manquant).');
+      problems.unshift('Entite parente mal definie (frontiere ou category id manquant).');
     }
-    if (!startStr || !isValidISODate(startStr)) problems.push('Date de début invalide ou manquante.');
-    if (!endStr   || !isValidISODate(endStr))   problems.push('Date de fin invalide ou manquante.');
-    if (startStr && endStr && isValidISODate(startStr) && isValidISODate(endStr)) {
-      const d1 = new Date(startStr);
-      const d2 = new Date(endStr);
-      if (d1.getTime() > d2.getTime()) problems.push('La date de début doit être <= à la date de fin.');
-    }
-    if (!geometry) problems.push('Aucune géométrie fournie pour la nouvelle entité (lance la prévisualisation).');
+    if (!geometry) problems.push('Aucune geometrie fournie pour la nouvelle entite (lance la previsualisation).');
 
     if (problems.length > 0) {
       return res.status(400).json({ ok: false, error: problems.join(' ') });
@@ -591,13 +614,31 @@ app.post('/api/editor/apply', async (req, res) => {
     try {
       await client.query('BEGIN');
 
+      const parentFront = await client.query(
+        'SELECT id FROM frontiere WHERE id = $1',
+        [parentFrontiereId]
+      );
+      if (parentFront.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ ok: false, error: `Frontiere parente ${parentFrontiereId} introuvable.` });
+      }
+
+      const parentEcRow = await client.query(
+        'SELECT id FROM entity_category WHERE id = $1',
+        [parentEcId]
+      );
+      if (parentEcRow.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ ok: false, error: `Entity_category parent ${parentEcId} introuvable.` });
+      }
+
       const catRes = await client.query(
         'SELECT id FROM category WHERE LOWER(name) = LOWER($1) LIMIT 1',
         [category]
       );
       if (catRes.rowCount === 0) {
         await client.query('ROLLBACK');
-        return res.status(400).json({ ok: false, error: `Catégorie "${category}" inconnue.` });
+        return res.status(400).json({ ok: false, error: `Categorie "${category}" inconnue.` });
       }
       const categoryId = catRes.rows[0].id;
 
@@ -614,32 +655,28 @@ app.post('/api/editor/apply', async (req, res) => {
       const newEcId = ecRes.rows[0].id;
 
       const newFrontiere = await insertFrontiereFromGeometry(client, geometry, startStr, endStr);
-      if (!newFrontiere) throw new Error('Création de la frontière échouée.');
+      if (!newFrontiere) throw new Error('Creation de la frontiere echouee.');
       const newFrontiereId = newFrontiere.id;
 
-      if (parentEcId && parentFrontiereId) {
-        await client.query(
-          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
-           VALUES ($1, $2, $3)`,
-          [parentEcId, newEcId, newFrontiereId]
-        );
+      await client.query(
+        `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+         SELECT $1, $2, $3
+         WHERE NOT EXISTS (
+           SELECT 1 FROM parent_enfant_category
+           WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
+         )`,
+        [parentEcId, newEcId, newFrontiereId]
+      );
 
-        await client.query(
-          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
-           SELECT $1, $2, $3
-           WHERE NOT EXISTS (
-             SELECT 1 FROM parent_enfant_category
-             WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
-           )`,
-          [parentEcId, newEcId, parentFrontiereId]
-        );
-      } else {
-        await client.query(
-          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
-           VALUES (NULL, $1, $2)`,
-          [newEcId, newFrontiereId]
-        );
-      }
+      await client.query(
+        `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+         SELECT $1, $2, $3
+         WHERE NOT EXISTS (
+           SELECT 1 FROM parent_enfant_category
+           WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
+         )`,
+        [parentEcId, newEcId, parentFrontiereId]
+      );
 
       let addedCount = 0;
       let removedCount = 0;
@@ -664,9 +701,7 @@ app.post('/api/editor/apply', async (req, res) => {
         removedCount += r.rowCount;
       }
 
-      if (parentFrontiereId && parentEcId) {
-        await recomputeParentGeometry(client, parentFrontiereId, parentEcId, startStr, endStr);
-      }
+      await recomputeParentGeometry(client, parentFrontiereId, parentEcId, startStr, endStr);
 
       await client.query('COMMIT');
       return res.json({
@@ -683,7 +718,194 @@ app.post('/api/editor/apply', async (req, res) => {
     } catch (err) {
       await client.query('ROLLBACK');
       console.error('Erreur /api/editor/apply (create-entity) :', err);
-      return res.status(500).json({ ok: false, error: 'Erreur serveur lors de la création de la nouvelle entité.' });
+      return res.status(500).json({ ok: false, error: 'Erreur serveur lors de la creation de la nouvelle entite.' });
+    } finally {
+      client.release();
+    }
+  }
+
+  /***********************
+   * 3) EDIT-BORDERS-SPLIT
+   *    - Segmente la frontière du parent sur [start,end]
+   *    - Applique add/remove sur le segment
+   *    - Recalcule la géométrie du parent
+   *    - Pour chaque enfant ajouté, segmente les autres parents possédant cet enfant et retire l'enfant sur le segment
+   ***********************/
+  if (op === 'edit-borders-split') {
+    const parent     = body.parent || {};
+    const period     = body.period || {};
+    const selections = body.selections || {};
+
+    const frontId    = parent.frontiereId;
+    const ecParentId = parent.entityCategoryId;
+
+    const startStr = period.start;
+    const endStr   = period.end;
+
+    const addList    = normalizeIdList(selections.add);
+    const removeList = normalizeIdList(selections.remove);
+
+    const problems = [];
+    if (!frontId)    problems.push('frontiereId manquant pour edit-borders-split.');
+    if (!ecParentId) problems.push('entityCategoryId (parent) manquant pour edit-borders-split.');
+    if (!startStr || !isValidISODate(startStr)) problems.push('Date de début invalide ou manquante.');
+    if (!endStr   || !isValidISODate(endStr))   problems.push('Date de fin invalide ou manquante.');
+    if (startStr && endStr && isValidISODate(startStr) && isValidISODate(endStr)) {
+      const d1 = new Date(startStr);
+      const d2 = new Date(endStr);
+      if (d1.getTime() > d2.getTime()) problems.push('La date de début doit être <= à la date de fin.');
+    }
+    if (addList.length === 0 && removeList.length === 0) {
+      problems.push('Aucune modification d’enfants (add/remove) demandée.');
+    }
+
+    if (problems.length > 0) {
+      return res.status(400).json({ ok: false, error: problems.join(' ') });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN'); // debut de transaction
+
+      // Vérifier la frontière source
+      const { rows: srcRows } = await client.query(
+        'SELECT id, date_debut, date_fin FROM frontiere WHERE id = $1',
+        [frontId]
+      );
+      if (srcRows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ ok: false, error: `Frontière ${frontId} introuvable.` });
+      }
+      const src = srcRows[0];
+      const srcStart = src.date_debut;
+      const srcEnd   = src.date_fin;
+
+      // Segmenter la frontière parente
+      let midFrontId = frontId;
+
+      // Si le segment commence après le début, on réduit la frontière d'origine et on crée le segment milieu
+      if (srcStart && startStr && new Date(srcStart) < new Date(startStr)) {
+        await client.query(
+          'UPDATE frontiere SET date_fin = $1::date WHERE id = $2',
+          [startStr, frontId]
+        );
+        const mid = await duplicateFrontiereWithDates(client, frontId, startStr, srcEnd);
+        midFrontId = mid.id;
+      } else {
+        // Sinon on s'assure que la frontière parent couvre le segment
+        await client.query(
+          'UPDATE frontiere SET date_debut = $1::date, date_fin = $2::date WHERE id = $3',
+          [startStr, srcEnd, frontId]
+        );
+      }
+
+      // Segment après si besoin
+      if (srcEnd && endStr && new Date(srcEnd) > new Date(endStr)) {
+        await duplicateFrontiereWithDates(client, midFrontId, endStr, srcEnd);
+        await client.query(
+          'UPDATE frontiere SET date_fin = $1::date WHERE id = $2',
+          [endStr, midFrontId]
+        );
+      }
+
+      // Appliquer add/remove sur le segment milieu
+      let addedCount = 0;
+      let removedCount = 0;
+      for (const childId of addList) {
+        const r = await client.query(
+          `INSERT INTO parent_enfant_category (ec_parent_id, ec_enfant_id, frontiere_id)
+           SELECT $1, $2, $3
+           WHERE NOT EXISTS (
+             SELECT 1 FROM parent_enfant_category
+             WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
+           )`,
+          [ecParentId, childId, midFrontId]
+        );
+        addedCount += r.rowCount;
+      }
+      for (const childId of removeList) {
+        const r = await client.query(
+          `DELETE FROM parent_enfant_category
+           WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3`,
+          [ecParentId, childId, midFrontId]
+        );
+        removedCount += r.rowCount;
+      }
+
+      const recomputed = await recomputeParentGeometry(client, midFrontId, ecParentId, startStr, endStr);
+
+      // Pour chaque enfant ajouté : retirer cet enfant des autres parents actifs sur le segment
+      for (const childId of addList) {
+        const { rows: otherLinks } = await client.query(
+          `SELECT pec.frontiere_id, pec.ec_parent_id, f.date_debut, f.date_fin
+           FROM parent_enfant_category pec
+           JOIN frontiere f ON f.id = pec.frontiere_id
+           WHERE pec.ec_enfant_id = $1
+             AND pec.frontiere_id <> $2
+             AND (f.date_debut IS NULL OR f.date_debut < $3::date)
+             AND (f.date_fin   IS NULL OR f.date_fin   > $4::date)`,
+          [childId, midFrontId, endStr, startStr]
+        );
+
+        for (const link of otherLinks) {
+          const otherId = link.frontiere_id;
+          const otherStart = link.date_debut;
+          const otherEnd   = link.date_fin;
+
+          // Segmenter l'autre frontière sur l'intervalle d'overlap
+          let overlapStart = startStr;
+          let overlapEnd   = endStr;
+          if (otherStart && new Date(otherStart) > new Date(overlapStart)) overlapStart = otherStart.toISOString().slice(0,10);
+          if (otherEnd   && new Date(otherEnd)   < new Date(overlapEnd))   overlapEnd   = otherEnd.toISOString().slice(0,10);
+
+          let midOtherId = otherId;
+          if (otherStart && new Date(otherStart) < new Date(overlapStart)) {
+            await client.query('UPDATE frontiere SET date_fin = $1::date WHERE id = $2', [overlapStart, otherId]);
+            const mid = await duplicateFrontiereWithDates(client, otherId, overlapStart, otherEnd);
+            midOtherId = mid.id;
+          } else {
+            await client.query('UPDATE frontiere SET date_debut = $1::date WHERE id = $2', [overlapStart, otherId]);
+          }
+          if (otherEnd && new Date(otherEnd) > new Date(overlapEnd)) {
+            await duplicateFrontiereWithDates(client, midOtherId, overlapEnd, otherEnd);
+            await client.query('UPDATE frontiere SET date_fin = $1::date WHERE id = $2', [overlapEnd, midOtherId]);
+          }
+
+          // Retirer l'enfant sur le segment
+          await client.query(
+            `DELETE FROM parent_enfant_category
+             WHERE ec_enfant_id = $1 AND frontiere_id = $2`,
+            [childId, midOtherId]
+          );
+          await recomputeParentGeometry(client, midOtherId, link.ec_parent_id, overlapStart, overlapEnd);
+
+          // Supprimer la frontière si elle n'a plus d'enfants
+          const { rows: cntRows } = await client.query(
+            `SELECT COUNT(*) AS c FROM parent_enfant_category WHERE frontiere_id = $1`,
+            [midOtherId]
+          );
+          if (Number(cntRows[0].c) === 0) {
+            await client.query('DELETE FROM frontiere WHERE id = $1', [midOtherId]);
+          }
+        }
+      }
+
+      await client.query('COMMIT');
+      return res.json({
+        ok: true,
+        result: {
+          operation: 'edit-borders-split',
+          frontiereId: frontId,
+          midFrontiereId: midFrontId,
+          added: addedCount,
+          removed: removedCount,
+          recomputedFrontiere: recomputed
+        }
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Erreur /api/editor/apply (edit-borders-split) :', err);
+      return res.status(500).json({ ok: false, error: 'Erreur serveur lors de la segmentation des frontières.' });
     } finally {
       client.release();
     }
@@ -700,15 +922,8 @@ app.post('/api/editor/apply', async (req, res) => {
     const startStr = period.start;
     const endStr   = period.end;
 
-    const rawAdd    = Array.isArray(selections.add)    ? selections.add    : [];
-    const rawRemove = Array.isArray(selections.remove) ? selections.remove : [];
-
-    const addList = rawAdd
-      .map(Number)
-      .filter(n => Number.isInteger(n));
-    const removeList = rawRemove
-      .map(Number)
-      .filter(n => Number.isInteger(n));
+    const addList    = normalizeIdList(selections.add);
+    const removeList = normalizeIdList(selections.remove);
 
     const problems = [];
 
@@ -741,7 +956,7 @@ app.post('/api/editor/apply', async (req, res) => {
 
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query('BEGIN'); // debut de transaction
 
       // 1) Mettre à jour les dates de la frontière
       const updateDatesSQL = `
@@ -857,10 +1072,8 @@ app.post('/api/editor/apply', async (req, res) => {
     const endStr   = period.end;
     const geometry = body.geometry || body.newGeometry || null;
 
-    const rawAdd    = Array.isArray(selections.add)    ? selections.add    : [];
-    const rawRemove = Array.isArray(selections.remove) ? selections.remove : [];
-    const addList    = rawAdd.map(Number).filter(Number.isInteger);
-    const removeList = rawRemove.map(Number).filter(Number.isInteger);
+    const addList    = normalizeIdList(selections.add);
+    const removeList = normalizeIdList(selections.remove);
 
     const problems = [];
     if (!frontId)    problems.push('frontiereId source manquant pour duplicate-entity.');
@@ -880,7 +1093,7 @@ app.post('/api/editor/apply', async (req, res) => {
 
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query('BEGIN'); // debut de transaction
 
       const checkFront = await client.query('SELECT id FROM frontiere WHERE id = $1', [frontId]);
       if (checkFront.rowCount === 0) {
@@ -966,7 +1179,7 @@ app.post('/api/editor/apply', async (req, res) => {
 
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query('BEGIN'); // debut de transaction
 
       // 1) Trouver le NOUVEAU Parent (Category ID)
       const findParentCatSQL = `

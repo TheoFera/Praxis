@@ -1,19 +1,3 @@
-﻿/*à faire : 
-- Faire un bouton play/pause pour voir le temps défiler tout seul
-- Empêcher de pouvoir aller dans les dates après la date du jour et avant -99 000 avant JC => OK
-- Ajouter d'autres factions mineures qui ont constituées la France => nécessite de réussir à gérer + d'un pays
-- Intégrer les conflits (events)
-
-- intégrer de nouvelles données à la slide bar :
-    -> Mode de production
-    -> Créer des graphiques en javascript
-    -> Lecteur de musique
-    -> Livres de l'époque
-
-- intégrer d'autres données au  Geojson :
-    -> Avant 1713
-*/
-
 ////////////// initialisation des boutons ////////////
 ////Side bar 
 const toggleButton = document.getElementById('toggle-button');
@@ -449,7 +433,7 @@ function updateVisibility(){
   municipalitiesPane.style.pointerEvents = municipClickable ? 'auto' : 'none';
 }
 
-// D�bounce des rafra�chissements lourds (requ�te API)
+// Débounce des rafraichissements lourds (requête API)
 let refreshTimer = null;
 function scheduleRefresh() {
   clearTimeout(refreshTimer);
@@ -811,6 +795,9 @@ function renderEditorPanel() {
   if (!editor.startDate) editor.startDate = currentISO;
   if (!editor.endDate)   editor.endDate   = currentISO;
 
+  // Opération choisie (par défaut : modifier frontières + période sans split)
+  const op = editor.operation || 'edit-borders-dates';
+
   const parentLabel = editor.selectedParent
     ? `${editor.selectedParent.name} (${editor.selectedParent.category ?? 'catégorie ?'})`
     : 'Aucune (clique un polygone sur la carte)';
@@ -820,8 +807,6 @@ function renderEditorPanel() {
   const s = editor.startDate ? new Date(editor.startDate) : null;
   const e = editor.endDate   ? new Date(editor.endDate)   : null;
   const datesOk     = !!(s && e && s <= e);
-
-  const op = editor.operation || '';
 
   let bodyHTML = '';
 
@@ -835,12 +820,15 @@ function renderEditorPanel() {
         </div>
       </div>
     `;
-  } else if (op === 'edit-borders' || op === 'edit-borders-dates') {
-  // Cas : modifier les frontières (avec ou sans modification de période)
+  } else if (op === 'edit-borders' || op === 'edit-borders-dates' || op === 'edit-borders-split') {
+  // Cas : modifier les frontières (avec ou sans modification de période / split)
+  const isSplit = (op === 'edit-borders-split');
   const datesReadOnly = (op === 'edit-borders');
   const dateHelpText = datesReadOnly
     ? 'En mode "Modifier les frontières", ces dates viennent de la frontière sélectionnée et ne seront pas modifiées.'
-    : 'Ces dates correspondent à la période pendant laquelle ces frontières s’appliquent.';
+    : isSplit
+      ? 'Segmentera la frontière sur cette période, ajoutera/retirera les enfants et coupera les chevauchements.'
+      : 'Ces dates correspondent à la période pendant laquelle ces frontières s’appliquent.';
 
   bodyHTML = `
       <div id="editor-body">
@@ -1206,9 +1194,8 @@ function renderEditorPanel() {
         <label style="display:block; font-weight:600; margin-bottom:4px;">Que veux-tu faire ?</label>
         <select id="editor-operation" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;">
           <option value="">— Choisir une opération —</option>
-          <option value="edit-borders"       ${op==='edit-borders'?'selected':''}>Modifier les frontières d’une entité</option>
-          <option value="edit-dates"         ${op==='edit-dates'?'selected':''}>Modifier la période (dates) d’une frontière</option>
-          <option value="edit-borders-dates" ${op==='edit-borders-dates'?'selected':''}>Modifier frontières et période</option>
+          <option value="edit-borders-dates" ${op==='edit-borders-dates'?'selected':''}>Modifier frontières et période (sans créer d’autres frontières)</option>
+          <option value="edit-dates"         ${op==='edit-dates'?'selected':''}>Modifier uniquement la période (dates) d’une frontière</option>
           <option value="create-entity"      ${op==='create-entity'?'selected':''}>Créer une nouvelle entité et définir sa zone</option>
           <option value="duplicate-entity"   ${op==='duplicate-entity'?'selected':''}>Dupliquer une entité sur une autre période puis modifier ses frontières</option>
           <option value="change-parent"      ${op==='change-parent'?'selected':''}>Changer le parent d’une entité sur une période</option>
@@ -1227,18 +1214,18 @@ function renderEditorPanel() {
 // Connecte les boutons du panneau d’édition
 function attachEditorPanelEvents() {
   // --- 0) Gestion du choix de l'opération ---
-    const opSelect = document.getElementById('editor-operation');
-    if (opSelect) {
-      // On positionne la valeur actuelle dans la liste (utile si on rerend)
-      opSelect.value = editor.operation || '';
+  const opSelect = document.getElementById('editor-operation');
+  if (opSelect) {
+    // On positionne la valeur actuelle dans la liste (utile si on rerend)
+    opSelect.value = editor.operation || '';
 
-      opSelect.addEventListener('change', () => {
-        editor.operation = opSelect.value || '';
+    opSelect.addEventListener('change', () => {
+      editor.operation = opSelect.value || '';
 
-        // Quand on change d'opération, on rerend tout le panneau éditeur
-        if (sideContent) {
-          sideContent.innerHTML = renderEditorPanel();
-          attachEditorPanelEvents(); // on rebranche tous les écouteurs
+      // Quand on change d'opération, on rerend tout le panneau éditeur
+      if (sideContent) {
+        sideContent.innerHTML = renderEditorPanel();
+        attachEditorPanelEvents(); // on rebranche tous les écouteurs
         }
       });
     }
@@ -1438,7 +1425,7 @@ function attachEditorPanelEvents() {
 
         const payload = result.payload;
 
-        const opsSupportees = ['edit-dates', 'edit-borders', 'edit-borders-dates', 'change-parent', 'create-entity', 'duplicate-entity'];
+        const opsSupportees = ['edit-dates', 'edit-borders', 'edit-borders-dates', 'edit-borders-split', 'change-parent', 'create-entity', 'duplicate-entity'];
         if (!payload.operation || !opsSupportees.includes(payload.operation)) {
           msgBox.innerHTML = `
             <div style="color:#b00020; margin-bottom:6px;"><strong>Opération non encore supportée pour la sauvegarde.</strong></div>
@@ -1537,23 +1524,26 @@ function attachEditorPanelEvents() {
 function renderSummary(msgBox, force=false) {
   if (!msgBox) return;
 
+  const opNorm = editor.operation;
+
   const p = editor.selectedParent;
-  const parentTxt = p ? `${p.name} ${p.id ? `(id ${p.id})` : ''}` : '— (non défini)';
+  const parentTxt = p ? `${p.name} ${p.id ? `(id ${p.id})` : ''}` : '- (non défini)';
 
   const s = editor.startDate ? new Date(editor.startDate) : null;
   const e = editor.endDate   ? new Date(editor.endDate)   : null;
   let problems = [];
 
   // Validation différente selon l'opération choisie
-  if (editor.operation === 'edit-borders-dates' ||
-      editor.operation === 'edit-dates') {
+  if (opNorm === 'edit-borders-split' ||
+      opNorm === 'edit-borders-dates' ||
+      opNorm === 'edit-dates') {
 
     if (!editor.startDate) problems.push('Date de début manquante.');
     if (!editor.endDate)   problems.push('Date de fin manquante.');
     if (s && e && s > e)   problems.push('La date de début doit être ≤ la date de fin.');
     if (!p)                problems.push('Aucune entité mère / frontière sélectionnée (clique un polygone ou saisis un nom).');
 
-  } else if (editor.operation === 'edit-borders') {
+  } else if (opNorm === 'edit-borders') {
 
     // En "modifier les frontières", les dates sont simplement informatives
     if (!p) problems.push('Aucune entité mère / frontière sélectionnée (clique un polygone ou saisis un nom).');
@@ -1568,15 +1558,18 @@ function renderSummary(msgBox, force=false) {
 
 
   let actionTxt;
-  switch (editor.operation) {
+  switch (opNorm) {
     case 'edit-borders':
       actionTxt = 'Modifier les frontières de cette entité sur la période choisie';
       break;
-    case 'edit-dates':
-      actionTxt = 'Modifier uniquement la période (dates) de cette frontière';
+    case 'edit-borders-split':
+      actionTxt = 'Segmenter la période, ajouter/retirer des enfants et supprimer les chevauchements';
       break;
     case 'edit-borders-dates':
-      actionTxt = 'Modifier à la fois les frontières et la période de cette entité';
+      actionTxt = 'Modifier les frontières et la période sans créer de nouvelles frontières';
+      break;
+    case 'edit-dates':
+      actionTxt = 'Modifier uniquement la période (dates) de cette frontière';
       break;
     case 'create-entity':
       actionTxt = 'Créer une nouvelle entité et définir sa zone';
@@ -1600,7 +1593,7 @@ function renderSummary(msgBox, force=false) {
     municipalities: 'Municipalities / Communes (ADM2)'
   })[editor.granularity] || editor.granularity || '—';
 
-  const opLabel = editor.operation || '— (aucune opération choisie)';
+  const opLabel = opNorm || '— (aucune opération choisie)';
 
   if (problems.length > 0) {
     msgBox.innerHTML = `
@@ -1754,7 +1747,10 @@ function buildEditorPayload(options = {}) {
     if (!editor.newEntityName) problems.push('Nom de la nouvelle entité manquant.');
     if (!editor.startDate) problems.push('Date de début manquante.');
     if (!editor.endDate)   problems.push('Date de fin manquante.');
-    if (s && e && s > e) problems.push('La date de début doit Ǧtre �%� la date de fin.');
+    if (s && e && s > e) problems.push('La date de début doit être à la date de fin.');
+    if (op === 'edit-borders-split' && selectedAddIds.size === 0 && selectedRemoveIds.size === 0) {
+      problems.push('Aucune modification d\'enfants (add/remove) demandée.');
+    }
     if (requireGeometry && !editor.newGeometry) {
       problems.push('Lance la prévisualisation pour calculer la géométrie.');
     }
@@ -1786,7 +1782,10 @@ function buildEditorPayload(options = {}) {
     if (!parent) problems.push('Aucune entité è dupliquer sélectionnée.');
     if (!editor.startDate) problems.push('Date de début manquante.');
     if (!editor.endDate)   problems.push('Date de fin manquante.');
-    if (s && e && s > e) problems.push('La date de début doit Ǧtre �%� la date de fin.');
+    if (s && e && s > e) problems.push('La date de début doit être à la date de fin.');
+    if (op === 'edit-borders-split' && selectedAddIds.size === 0 && selectedRemoveIds.size === 0) {
+      problems.push('Aucune modification d\'enfants (add/remove) demandée.');
+    }
     if (requireGeometry && !editor.newGeometry) {
       problems.push('Prévisualise pour calculer la géométrie copiée.');
     }
@@ -1810,16 +1809,19 @@ function buildEditorPayload(options = {}) {
     return { ok: true, payload };
   }
 
-  if (op === 'edit-borders' || op === 'edit-borders-dates') {
+  if (op === 'edit-borders' || op === 'edit-borders-dates' || op === 'edit-borders-split') {
     if (!parent) problems.push('Aucune entité mère sélectionnée.');
     if (requireGeometry && !editor.newGeometry) {
       problems.push('Tu dois d’abord cliquer sur "Prévisualiser" pour calculer la nouvelle frontière.');
     }
-    if (op === 'edit-borders-dates') {
+    if (op === 'edit-borders-dates' || op === 'edit-borders-split') {
       if (!editor.startDate) problems.push('Date de début manquante.');
       if (!editor.endDate)   problems.push('Date de fin manquante.');
     }
     if (s && e && s > e) problems.push('La date de début doit être ≤ la date de fin.');
+    if (op === 'edit-borders-split' && selectedAddIds.size === 0 && selectedRemoveIds.size === 0) {
+      problems.push('Aucune modification d\'enfants (add/remove) demandée.');
+    }
 
     if (problems.length > 0) return { ok: false, problems };
 
@@ -1904,7 +1906,7 @@ ${escapeHTML(JSON.stringify(payload, null, 2))}
   console.log('EDITOR PAYLOAD', payload);
 
   // ➜ Prévisualisation géométrique pour les opérations sur les frontières
-  if (payload.operation === 'edit-borders' || payload.operation === 'edit-borders-dates' || payload.operation === 'duplicate-entity') {
+  if (payload.operation === 'edit-borders' || payload.operation === 'edit-borders-dates' || payload.operation === 'edit-borders-split' || payload.operation === 'duplicate-entity') {
     previewParentGeometryBorders();
   } else if (payload.operation === 'create-entity') {
     previewCreateEntityGeometry();
@@ -2033,7 +2035,7 @@ function previewCreateEntityGeometry() {
 }
 
 function resetEditorState() {
-  editor.operation        = '';
+  editor.operation        = 'edit-borders-dates';
   editor.selectedParent   = null;
   editor.newParent        = null;    // ★ Reset
   editor.pickingTarget    = 'child'; // ★ Reset
