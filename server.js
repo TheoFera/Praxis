@@ -14,12 +14,12 @@ const { Pool }    = require('pg');
 const path        = require('path');
 
 const app  = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 // 1) Middlewares
 app.use(cors());
 app.use(compression());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 // 2) Fichiers statiques (index.html, script.js, style.css…)
 const staticDir = path.join(__dirname, 'public');
@@ -129,7 +129,11 @@ app.get('/api/frontieres', async (req, res) => {
             WHEN $7 < 4  THEN f.geom_z2
             WHEN $7 < 7  THEN f.geom_z1
             ELSE COALESCE(f.geom_z0, f.geom)
-          END AS g
+          END AS g,
+          ROW_NUMBER() OVER (
+            PARTITION BY f.id
+            ORDER BY (pec.ec_parent_id IS NULL) DESC, pec.id
+          ) AS rn
         FROM frontiere f
         JOIN parent_enfant_category pec ON pec.frontiere_id = f.id
         JOIN entity_category ec         ON ec.id = pec.ec_enfant_id
@@ -149,6 +153,9 @@ app.get('/api/frontieres', async (req, res) => {
                 END,
                 ST_MakeEnvelope($3,$4,$5,$6,4326)
               )
+      )
+      , filtered AS (
+        SELECT * FROM src WHERE rn = 1
       )
       SELECT jsonb_build_object(
         'type','FeatureCollection',
@@ -175,8 +182,8 @@ app.get('/api/frontieres', async (req, res) => {
            '[]'::jsonb
         )
       ) AS fc
-      FROM src;
-    `;
+      FROM filtered; 
+    `; 
 
     const { rows } = await client.query(sql, [
       dateStr,             // $1 : date de référence
@@ -601,9 +608,9 @@ app.post('/api/editor/apply', async (req, res) => {
     const problems = validateDateRange(startStr, endStr);
     if (!name) problems.unshift('Nom de la nouvelle entite manquant.');
     if (!category) problems.unshift('Categorie de la nouvelle entite manquante.');
-    if (!parentEcId || !parentFrontiereId) {
-      problems.unshift('Entite parente mal definie (frontiere ou category id manquant).');
-    }
+    const hasParent = Boolean(parentEcId) && Boolean(parentFrontiereId);
+    const partialParent = (!parentEcId && parentFrontiereId) || (parentEcId && !parentFrontiereId);
+    if (partialParent) problems.unshift('Si un parent est fourni, frontiereId et entityCategoryId doivent etre renseignes tous les deux.');
     if (!geometry) problems.push('Aucune geometrie fournie pour la nouvelle entite (lance la previsualisation).');
 
     if (problems.length > 0) {
@@ -614,22 +621,24 @@ app.post('/api/editor/apply', async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      const parentFront = await client.query(
-        'SELECT id FROM frontiere WHERE id = $1',
-        [parentFrontiereId]
-      );
-      if (parentFront.rowCount === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ ok: false, error: `Frontiere parente ${parentFrontiereId} introuvable.` });
-      }
+      if (hasParent) {
+        const parentFront = await client.query(
+          'SELECT id FROM frontiere WHERE id = $1',
+          [parentFrontiereId]
+        );
+        if (parentFront.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ ok: false, error: `Frontiere parente ${parentFrontiereId} introuvable.` });
+        }
 
-      const parentEcRow = await client.query(
-        'SELECT id FROM entity_category WHERE id = $1',
-        [parentEcId]
-      );
-      if (parentEcRow.rowCount === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ ok: false, error: `Entity_category parent ${parentEcId} introuvable.` });
+        const parentEcRow = await client.query(
+          'SELECT id FROM entity_category WHERE id = $1',
+          [parentEcId]
+        );
+        if (parentEcRow.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ ok: false, error: `Entity_category parent ${parentEcId} introuvable.` });
+        }
       }
 
       const catRes = await client.query(
@@ -658,25 +667,38 @@ app.post('/api/editor/apply', async (req, res) => {
       if (!newFrontiere) throw new Error('Creation de la frontiere echouee.');
       const newFrontiereId = newFrontiere.id;
 
-      await client.query(
-        `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
-         SELECT $1, $2, $3
-         WHERE NOT EXISTS (
-           SELECT 1 FROM parent_enfant_category
-           WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
-         )`,
-        [parentEcId, newEcId, newFrontiereId]
-      );
+      if (hasParent) {
+        await client.query(
+          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+           SELECT $1, $2, $3
+           WHERE NOT EXISTS (
+             SELECT 1 FROM parent_enfant_category
+             WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
+           )`,
+          [parentEcId, newEcId, newFrontiereId]
+        );
 
-      await client.query(
-        `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
-         SELECT $1, $2, $3
-         WHERE NOT EXISTS (
-           SELECT 1 FROM parent_enfant_category
-           WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
-         )`,
-        [parentEcId, newEcId, parentFrontiereId]
-      );
+        await client.query(
+          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+           SELECT $1, $2, $3
+           WHERE NOT EXISTS (
+             SELECT 1 FROM parent_enfant_category
+             WHERE ec_parent_id = $1 AND ec_enfant_id = $2 AND frontiere_id = $3
+           )`,
+          [parentEcId, newEcId, parentFrontiereId]
+        );
+      } else {
+        // Parent optionnel : ligne avec parent NULL pour rendre la frontiere consultable
+        await client.query(
+          `INSERT INTO parent_enfant_category(ec_parent_id, ec_enfant_id, frontiere_id)
+           SELECT NULL, $1, $2
+           WHERE NOT EXISTS (
+             SELECT 1 FROM parent_enfant_category
+             WHERE ec_parent_id IS NULL AND ec_enfant_id = $1 AND frontiere_id = $2
+           )`,
+          [newEcId, newFrontiereId]
+        );
+      }
 
       let addedCount = 0;
       let removedCount = 0;
@@ -701,7 +723,9 @@ app.post('/api/editor/apply', async (req, res) => {
         removedCount += r.rowCount;
       }
 
-      await recomputeParentGeometry(client, parentFrontiereId, parentEcId, startStr, endStr);
+      if (hasParent) {
+        await recomputeParentGeometry(client, parentFrontiereId, parentEcId, startStr, endStr);
+      }
 
       await client.query('COMMIT');
       return res.json({

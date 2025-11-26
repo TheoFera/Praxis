@@ -218,6 +218,8 @@ async function MAJLayersMulti() {
   const bboxCSV = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
                     .map(v => v.toFixed(6)).join(',');
   const dateISO = date.toISOString().split('T')[0];
+  const forceDistricts = editorMode && editor.granularity === 'districts';
+  const forceMunicip   = editorMode && editor.granularity === 'municipalities';
 
   // on efface les couches existantes
   [groupCountries, groupDistricts, groupMunicipalities].forEach(g => g.clearLayers());
@@ -237,8 +239,8 @@ async function MAJLayersMulti() {
       onEachFeature
     }).addTo(groupCountries);
 
-    // 2) Districts si z >= DISTRICT_Z
-    if (z >= DISTRICT_Z) {
+    // 2) Districts (force si l'éditeur demande ce niveau)
+    if (z >= DISTRICT_Z || forceDistricts) {
       const fc1 = await fetchFrontieres(dateISO, bboxCSV, 'districts', z);
       L.geoJSON(fc1, {
         pane: 'districts',
@@ -253,8 +255,8 @@ async function MAJLayersMulti() {
       }).addTo(groupDistricts);
     }
 
-    // 3) Municipalities si z >= MUNIC_Z
-    if (z >= MUNIC_Z) {
+    // 3) Municipalities (force si l'éditeur demande ce niveau)
+    if (z >= MUNIC_Z || forceMunicip) {
       const fc2 = await fetchFrontieres(dateISO, bboxCSV, 'municipalities', z);
       L.geoJSON(fc2, {
         pane: 'municipalities',
@@ -411,26 +413,50 @@ function updateVisibility(){
   const hasDistricts = groupDistricts.getLayers().length > 0;
   const hasMunicip   = groupMunicipalities.getLayers().length > 0;
 
-  // Visibilité automatique selon le zoom (l’utilisateur peut toujours décocher dans le control)
-  if (!map.hasLayer(groupCountries)) map.addLayer(groupCountries); // Countries toujours affichés par défaut
+  // Toujours afficher les pays (couche de base)
+  if (!map.hasLayer(groupCountries)) map.addLayer(groupCountries);
+
+  const countriesPane      = map.getPane('countries');
+  const districtsPane      = map.getPane('districts');
+  const municipalitiesPane = map.getPane('municipalities');
+
+  // En mode editeur : visibilite pilotee par "Niveau des enfants a modifier"
+  if (editorMode) {
+    const target = editor.granularity || 'countries';
+
+    if (countriesPane)      countriesPane.style.pointerEvents = 'none';
+    if (districtsPane)      districtsPane.style.pointerEvents = 'none';
+    if (municipalitiesPane) municipalitiesPane.style.pointerEvents = 'none';
+
+    if (target === 'countries') {
+      if (map.hasLayer(groupDistricts))      map.removeLayer(groupDistricts);
+      if (map.hasLayer(groupMunicipalities)) map.removeLayer(groupMunicipalities);
+      if (countriesPane) countriesPane.style.pointerEvents = 'auto';
+    } else if (target === 'districts') {
+      if (!map.hasLayer(groupDistricts)) map.addLayer(groupDistricts);
+      if (map.hasLayer(groupMunicipalities)) map.removeLayer(groupMunicipalities);
+      if (districtsPane && hasDistricts) districtsPane.style.pointerEvents = 'auto';
+    } else if (target === 'municipalities') {
+      if (!map.hasLayer(groupDistricts)) map.addLayer(groupDistricts); // contexte parent
+      if (!map.hasLayer(groupMunicipalities)) map.addLayer(groupMunicipalities);
+      if (municipalitiesPane && hasMunicip) municipalitiesPane.style.pointerEvents = 'auto';
+    }
+    return;
+  }
+
+  // Mode normal : visibilite automatique selon le zoom
   if (z >= DISTRICT_Z) { if (!map.hasLayer(groupDistricts)) map.addLayer(groupDistricts); }
   else                 { if (map.hasLayer(groupDistricts))  map.removeLayer(groupDistricts); }
 
   if (z >= MUNIC_Z)    { if (!map.hasLayer(groupMunicipalities)) map.addLayer(groupMunicipalities); }
   else                 { if (map.hasLayer(groupMunicipalities))  map.removeLayer(groupMunicipalities); }
 
-  // Priorité des clics (click-through via CSS pointer-events sur les panes)
-  const countriesPane      = map.getPane('countries');
-  const districtsPane      = map.getPane('districts');
-  const municipalitiesPane = map.getPane('municipalities');
-
-  // On ne bloque pas le clic sur un niveau si le niveau plus fin n'est pas chargé
   const municipClickable   = (z >= MUNIC_Z) && hasMunicip;
   const districtsClickable = (z >= DISTRICT_Z && (z < MUNIC_Z || !municipClickable)) && hasDistricts;
 
-  countriesPane.style.pointerEvents      = (!hasDistricts || z < DISTRICT_Z) ? 'auto' : 'none';
-  districtsPane.style.pointerEvents      = districtsClickable ? 'auto' : (municipClickable ? 'none' : 'auto');
-  municipalitiesPane.style.pointerEvents = municipClickable ? 'auto' : 'none';
+  if (countriesPane)      countriesPane.style.pointerEvents      = (!hasDistricts || z < DISTRICT_Z) ? 'auto' : 'none';
+  if (districtsPane)      districtsPane.style.pointerEvents      = districtsClickable ? 'auto' : (municipClickable ? 'none' : 'auto');
+  if (municipalitiesPane) municipalitiesPane.style.pointerEvents = municipClickable ? 'auto' : 'none';
 }
 
 // Débounce des rafraichissements lourds (requête API)
@@ -1193,12 +1219,14 @@ function renderEditorPanel() {
       <div class="field">
         <label style="display:block; font-weight:600; margin-bottom:4px;">Que veux-tu faire ?</label>
         <select id="editor-operation" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px;">
-          <option value="">— Choisir une opération —</option>
-          <option value="edit-borders-dates" ${op==='edit-borders-dates'?'selected':''}>Modifier frontières et période (sans créer d’autres frontières)</option>
-          <option value="edit-dates"         ${op==='edit-dates'?'selected':''}>Modifier uniquement la période (dates) d’une frontière</option>
-          <option value="create-entity"      ${op==='create-entity'?'selected':''}>Créer une nouvelle entité et définir sa zone</option>
-          <option value="duplicate-entity"   ${op==='duplicate-entity'?'selected':''}>Dupliquer une entité sur une autre période puis modifier ses frontières</option>
-          <option value="change-parent"      ${op==='change-parent'?'selected':''}>Changer le parent d’une entité sur une période</option>
+          <option value="">Choisir une operation</option>
+          <option value="edit-borders"       ${op==='edit-borders'?'selected':''}>Modifier uniquement les frontieres (ajouter/retirer des enfants)</option>
+          <option value="edit-borders-dates" ${op==='edit-borders-dates'?'selected':''}>Modifier frontieres et periode (sans creer d'autres frontieres)</option>
+          <option value="edit-borders-split" ${op==='edit-borders-split'?'selected':''}>Segmenter une periode puis modifier les frontieres</option>
+          <option value="edit-dates"         ${op==='edit-dates'?'selected':''}>Modifier uniquement la periode (dates) d'une frontiere</option>
+          <option value="create-entity"      ${op==='create-entity'?'selected':''}>Creer une nouvelle entite et definir sa zone</option>
+          <option value="duplicate-entity"   ${op==='duplicate-entity'?'selected':''}>Dupliquer une entite sur une autre periode puis modifier ses frontieres</option>
+          <option value="change-parent"      ${op==='change-parent'?'selected':''}>Changer le parent d'une entite sur une periode</option>
         </select>
         <small>Choisis d’abord une opération, les options utiles apparaîtront ensuite.</small>
       </div>
@@ -1347,6 +1375,8 @@ function attachEditorPanelEvents() {
         editor.newEntityCategory = granSel.value;
       }
       renderSummary(msgBox);
+      updateVisibility();   // applique tout de suite l'affichage du niveau choisi
+      scheduleRefresh();    // relance un fetch pour charger le niveau si besoin
     });
   }
 
@@ -1429,13 +1459,10 @@ function attachEditorPanelEvents() {
         if (!payload.operation || !opsSupportees.includes(payload.operation)) {
           msgBox.innerHTML = `
             <div style="color:#b00020; margin-bottom:6px;"><strong>Opération non encore supportée pour la sauvegarde.</strong></div>
-            <div>Pour l’instant, seules les opérations 
-              <strong>"Modifier la période (dates) d’une frontière"</strong>, 
-              <strong>"Modifier les frontières d’une entité"</strong> et 
-              <strong>"Modifier frontières et période"</strong> sont appliquées en base.</div>
+            <div>Opérations supportées : ${opsSupportees.join(', ')}.</div>
           `;
           return;
-        }
+}
 
         // 3) Appel API
         const resp = await fetch('/api/editor/apply', {
@@ -1443,8 +1470,15 @@ function attachEditorPanelEvents() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        const raw = await resp.text();
+        let data;
+        try {
+          data = raw ? JSON.parse(raw) : null;
+        } catch (e) {
+          throw new Error(raw || 'Reponse non JSON du serveur');
+        }
+        if (!resp.ok) throw new Error((data && data.error) || `HTTP ${resp.status}`);
+
 
         msgBox.innerHTML = `
           <div style="color:#1b5e20; margin-bottom:6px;"><strong>Sauvegarde effectuée ✔</strong></div>
@@ -1487,19 +1521,22 @@ function attachEditorPanelEvents() {
 
   if (btnSelToggle) {
     btnSelToggle.addEventListener('click', () => {
-      // Forcer le flux logique : mère choisie ET verrouillée
-      if (!editor.selectedParent) {
-        if (msgBox) msgBox.innerHTML = `<div style="color:#b00020;"><strong>Choisis d’abord une entité mère.</strong></div>`;
+      // Parent requis seulement pour les operations parent->enfants (pas pour create-entity)
+      const parentRequiredOps = ['edit-borders', 'edit-borders-dates', 'edit-borders-split', 'edit-dates', 'duplicate-entity', 'change-parent'];
+      const needParent = parentRequiredOps.includes(editor.operation);
+      if (needParent && !editor.selectedParent) {
+        if (msgBox) msgBox.innerHTML = `<div style="color:#b00020;"><strong>Choisis d'abord une entite mere.</strong></div>`;
         return;
       }
-      if (!editor.parentLocked) {
-        if (msgBox) msgBox.innerHTML = `<div style="color:#b00020;"><strong>Verrouille l’entité mère avant de sélectionner les enfants.</strong></div>`;
+      if (needParent && !editor.parentLocked) {
+        if (msgBox) msgBox.innerHTML = `<div style="color:#b00020;"><strong>Verrouille l'entite mere avant de selectionner les enfants.</strong></div>`;
         return;
       }
       selectionActive = !selectionActive;
-      btnSelToggle.textContent = selectionActive ? 'Arrêter sélection' : 'Activer sélection';
+      btnSelToggle.textContent = selectionActive ? 'Arreter selection' : 'Activer selection';
     });
   }
+
 
   if (btnSelClear) {
     btnSelClear.addEventListener('click', () => {
@@ -1548,6 +1585,12 @@ function renderSummary(msgBox, force=false) {
     // En "modifier les frontières", les dates sont simplement informatives
     if (!p) problems.push('Aucune entité mère / frontière sélectionnée (clique un polygone ou saisis un nom).');
     if (s && e && s > e)   problems.push('La date de début doit être ≤ la date de fin.');
+
+  } else if (opNorm === 'create-entity') {
+    if (!editor.newEntityName) problems.push('Nom de la nouvelle entite manquant.');
+    if (!editor.startDate) problems.push('Date de debut manquante.');
+    if (!editor.endDate)   problems.push('Date de fin manquante.');
+    if (s && e && s > e)   problems.push('La date de debut doit etre <= la date de fin.');
 
   } else {
     // Cas générique / autres opérations (pour l’instant)
@@ -1741,31 +1784,30 @@ function buildEditorPayload(options = {}) {
     return { ok: true, payload };
   }
 
-  // --- 2. EDIT-BORDERS & EDIT-BORDERS-DATES ---
+  // --- 2. CREATE-ENTITY ---
   if (op === 'create-entity') {
-    if (!parent) problems.push('Aucune entité parente sélectionnée.');
-    if (!editor.newEntityName) problems.push('Nom de la nouvelle entité manquant.');
-    if (!editor.startDate) problems.push('Date de début manquante.');
+    if (!editor.newEntityName) problems.push('Nom de la nouvelle entitŴ manquant.');
+    if (!editor.startDate) problems.push('Date de dŴbut manquante.');
     if (!editor.endDate)   problems.push('Date de fin manquante.');
-    if (s && e && s > e) problems.push('La date de début doit être à la date de fin.');
+    if (s && e && s > e) problems.push('La date de dŴbut doit Ŷtre Ŵ la date de fin.');
     if (op === 'edit-borders-split' && selectedAddIds.size === 0 && selectedRemoveIds.size === 0) {
-      problems.push('Aucune modification d\'enfants (add/remove) demandée.');
+      problems.push("Aucune modification d'enfants (add/remove) demandŴe.");
     }
     if (requireGeometry && !editor.newGeometry) {
-      problems.push('Lance la prévisualisation pour calculer la géométrie.');
+      problems.push('Lance la prŴvisualisation pour calculer la gŴomŴtrie.');
     }
     if (problems.length > 0) return { ok: false, problems };
 
     const payload = {
       operation: op,
-      parent: {
+      parent: parent ? {
         id:               parent.id,
         entityCategoryId: parent.entityCategoryId || null,
         name:             parent.name,
         category:         parent.category,
         level:            editor.parentLevel,
         frontiereId:      editor.parentFrontiereId
-      },
+      } : null,
       newEntity: {
         name: editor.newEntityName,
         category: editor.newEntityCategory || editor.granularity
@@ -1777,6 +1819,7 @@ function buildEditorPayload(options = {}) {
     };
     return { ok: true, payload };
   }
+
 
   if (op === 'duplicate-entity') {
     if (!parent) problems.push('Aucune entité è dupliquer sélectionnée.');
